@@ -1,0 +1,13 @@
+# Build output
+dist/
+runtime/build/
+launcher/bin/
+launcher/obj/
+
+# Runtime logs
+logs/
+
+# Editors
+.vs/
+.vscode/
+*.user
