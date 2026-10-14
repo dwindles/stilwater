@@ -10,6 +10,18 @@
     <RootNamespace>Stilwater.Launcher</RootNamespace>
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
     <Version>0.1.0</Version>
+    <Product>Stilwater</Product>
+    <Company>holdonquietly.com</Company>
+    <Authors>holdonquietly.com</Authors>
+    <Description>Saints Row 2 custom client by holdonquietly.com</Description>
   </PropertyGroup>
+
+  <PropertyGroup Condition="Exists('assets\logo.ico')">
+    <ApplicationIcon>assets\logo.ico</ApplicationIcon>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="assets\logo.png" Condition="Exists('assets\logo.png')" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
 
 </Project>

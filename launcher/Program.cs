@@ -11,7 +11,8 @@ internal static class Program
             return PlayHeadless();
 
         ApplicationConfiguration.Initialize();
-        Application.Run(new MainForm());
+        // --settings opens straight onto the Settings page.
+        Application.Run(new MainForm(args.Contains("--settings", StringComparer.OrdinalIgnoreCase) ? 1 : 0));
         return 0;
     }
 

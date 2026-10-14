@@ -11,6 +11,21 @@ public sealed record GameInstall(string Folder)
     public const int SteamAppId = 9480;
 
     public string Exe => Path.Combine(Folder, "SR2_pc.exe");
+    public string JuicedIni => Path.Combine(Folder, "juiced.ini");
+    public string DxvkConf => Path.Combine(Folder, "dxvk.conf");
+
+    public static bool IsRunning() =>
+        System.Diagnostics.Process.GetProcessesByName("SR2_pc").Length > 0 ||
+        System.Diagnostics.Process.GetProcessesByName("SR2MP").Length > 0;
+
+    public bool FpsCounterEnabled =>
+        File.Exists(DxvkConf) && File.ReadAllLines(DxvkConf).Any(l => l.TrimStart().StartsWith("dxvk.hud") && l.Contains("fps"));
+
+    public void SetFpsCounter(bool enabled) => File.WriteAllLines(DxvkConf,
+    [
+        "# On-screen FPS counter and frame-time graph (Stilwater launcher setting).",
+        enabled ? "dxvk.hud = fps,frametimes" : "# dxvk.hud = fps,frametimes",
+    ]);
 
     public static GameInstall? FindSteamInstall()
     {

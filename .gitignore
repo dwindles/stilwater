@@ -11,3 +11,7 @@ logs/
 .vs/
 .vscode/
 *.user
+
+# Game-derived and generated mod files
+mods/*/original/
+mods/*/out/
