@@ -72,6 +72,25 @@ p { margin: 0; }
 .me-text { display: flex; flex-direction: column; min-width: 0; max-width: 180px; line-height: 1.25; }
 .me-text b { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .me-text small { color: var(--muted); font-size: 11.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* The top bar is the window's title bar: drag it to move, the buttons on the right */
+.topbar { padding-right: 0; }
+.music-toggle, .window-buttons button {
+  display: grid; place-items: center; width: 46px; color: var(--muted);
+  font: 10px "Segoe Fluent Icons", "Segoe MDL2 Assets"; transition: background .1s, color .1s;
+}
+.music-toggle { width: 36px; font-size: 14px; margin-left: -18px; }
+.music-toggle:hover, .window-buttons button:hover { color: var(--text); background: var(--panel); }
+.music-toggle.off { color: var(--faint); }
+.window-buttons { display: flex; margin-left: -16px; }
+.window-buttons .close:hover { background: #c42b1c; color: #fff; }
+.grip { position: fixed; top: 0; height: 4px; z-index: 10; }
+.grip[data-edge="top"] { left: 8px; right: 8px; cursor: ns-resize; }
+.grip[data-edge="topleft"] { left: 0; width: 8px; cursor: nwse-resize; }
+.grip[data-edge="topright"] { right: 0; width: 8px; cursor: nesw-resize; }
+.maximized .grip { display: none; }
+.music { position: fixed; width: 1px; height: 1px; left: -10px; top: -10px; border: 0; opacity: 0; pointer-events: none; }
+.credits { margin-top: 28px; font-size: 10px; line-height: 1.5; color: var(--faint); opacity: .7; }
+.credits a { color: inherit; }
 .content { overflow-y: auto; }
 .page { padding: 18px 20px 28px; }
 .page.play-page { padding: 0 0 28px; }
@@ -242,6 +261,17 @@ textarea.input { height: 76px; padding: 6px 8px; resize: none; }
 .code { font: 700 18px var(--display); letter-spacing: .1em; user-select: text; }
 .code-row .note { flex: 1; text-align: right; }
 .mod.off .row-text b { color: var(--muted); }
+.share { display: grid; grid-template-columns: 1fr 1fr; gap: 1px; margin-top: 12px; background: var(--line); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
+.share-side { background: var(--panel); padding: 10px 12px 12px; }
+.share-side h2 { margin-bottom: 2px; }
+.share-side p { margin-bottom: 8px; }
+.share-row { display: flex; align-items: center; gap: 8px; min-height: 26px; }
+.share-row .code { font-size: 16px; }
+.share-row .input { width: 160px; height: 26px; font: 600 13px var(--display); letter-spacing: .08em; text-transform: uppercase; }
+.share-progress { grid-column: 1 / -1; background: var(--panel); padding: 6px 12px; }
+.section .actions { margin-left: auto; display: flex; gap: 6px; }
+.mod .remove { margin-left: auto; }
+.mod .remove + .switch { margin-left: 0; }
 
 /* Settings page */
 .settings-section + .settings-section { margin-top: 18px; }

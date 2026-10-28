@@ -20,7 +20,14 @@
       <span class="me-text"><b id="me-name">Not signed in</b><small id="me-status">Sign in</small></span>
       <span class="avatar small" id="me-avatar"></span>
     </button>
+    <button class="music-toggle" id="music-toggle" title="Music"></button>
+    <div class="window-buttons">
+      <button data-window="minimize" title="Minimize">&#xE921;</button>
+      <button data-window="maximize" id="maximize" title="Maximize">&#xE922;</button>
+      <button data-window="close" class="close" title="Close">&#xE8BB;</button>
+    </div>
   </header>
+  <div class="grip" data-edge="top"></div><div class="grip" data-edge="topleft"></div><div class="grip" data-edge="topright"></div>
 
   <main class="content">
     <!-- Play -->
@@ -87,6 +94,26 @@
         <span class="muted small note">Should match your co-op partner's. Changes apply the next time the game starts.</span>
         <button class="button small" id="open-mods">Open folder</button>
       </div>
+      <div class="share">
+        <div class="share-side">
+          <h2>Share your mods</h2>
+          <p class="muted small">Makes a code for the mods you added and have on. Whoever enters it gets the same ones.</p>
+          <div class="share-row">
+            <button class="button small accent" id="share-mods">Make a code</button>
+            <span class="code" id="share-code" hidden></span>
+            <button class="button small" id="copy-share" hidden>Copy</button>
+          </div>
+        </div>
+        <div class="share-side">
+          <h2>Get mods from a code</h2>
+          <p class="muted small">A friend's code installs their mods here. Close the game first.</p>
+          <div class="share-row">
+            <input class="input" id="get-code" placeholder="SW-XXXX-XXXX" maxlength="16" spellcheck="false">
+            <button class="button small" id="get-mods">Get</button>
+          </div>
+        </div>
+        <p class="muted small share-progress" id="mods-progress" hidden></p>
+      </div>
       <div id="mods-body"></div>
     </section>
 
@@ -99,6 +126,7 @@
         <button class="button ghost" id="discard">Discard</button>
         <button class="button accent" id="save">Save</button>
       </div>
+      <p class="credits" id="credits"></p>
     </section>
   </main>
 </div>

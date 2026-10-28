@@ -18,6 +18,7 @@ public sealed class MainForm : Form
     private readonly Online _online;
     private readonly int _startPage;
     private Bridge? _bridge;
+    private GamePipe? _pipe;
 
     public MainForm(int startPage = 0)
     {
@@ -41,7 +42,9 @@ public sealed class MainForm : Form
         try
         {
             // Browser data next to the launcher (on the game's drive), not in AppData.
-            var environment = await CoreWebView2Environment.CreateAsync(null, Path.Combine(Runtime.Folder, "cache", "webview"));
+            // The background music starts by itself, without waiting for a click.
+            var options = new CoreWebView2EnvironmentOptions("--autoplay-policy=no-user-gesture-required");
+            var environment = await CoreWebView2Environment.CreateAsync(null, Path.Combine(Runtime.Folder, "cache", "webview"), options);
             await _web.EnsureCoreWebView2Async(environment);
         }
         catch (Exception e) when (e is WebView2RuntimeNotFoundException or COMException)
@@ -79,6 +82,15 @@ public sealed class MainForm : Form
             art = "https://art.stilwater.app/" + Uri.EscapeDataString(Path.GetFileName(artFile));
         }
         _bridge = new Bridge(this, web, _game, _online) { Art = art };
+        _pipe = new GamePipe(this, _online);
+        // The page's maximize button shows restore while the window is maximized.
+        var maximized = false;
+        Resize += (_, _) =>
+        {
+            if (WindowState == FormWindowState.Minimized || maximized == (WindowState == FormWindowState.Maximized)) return;
+            maximized = WindowState == FormWindowState.Maximized;
+            _bridge.Emit("window", new { maximized });
+        };
         web.Navigate($"{Origin}index.html#{Pages[_startPage]}");
         // For checking the UI while developing: STILWATER_SNAPSHOT=<file.png> saves the page a few
         // seconds after it opens and closes the window, without signing in.
@@ -97,7 +109,7 @@ public sealed class MainForm : Form
     /// already signed in with it.</summary>
     private async Task SignInSavedAsync()
     {
-        if (GameLogin.Read() is not { IsComplete: true } login || GameInstall.IsRunning()) return;
+        if (GameLogin.Read() is not { IsComplete: true } login || (GameInstall.IsRunning() && Online.UsesOpenSpy)) return;
         try { await _online.SignInAsync(login); }
         catch (Exception e) when (e is InvalidOperationException or IOException or System.Net.Sockets.SocketException or TimeoutException) { }
     }
@@ -105,21 +117,30 @@ public sealed class MainForm : Form
     protected override void OnHandleCreated(EventArgs e)
     {
         base.OnHandleCreated(e);
-        // A dark title bar to match (Windows 10 20H1+ and 11), in the page's own colour on Windows 11.
+        // Dark window chrome to match (Windows 10 20H1+ and 11); the page draws the title bar.
         var on = 1;
         DwmSetWindowAttribute(Handle, 20, ref on, sizeof(int));
-        var caption = 0x00100A0B;       // #0b0a10 as BGR
-        DwmSetWindowAttribute(Handle, 35, ref caption, sizeof(int));
+        // Has Windows measure the frame again, now without the title bar (WindowFrame.CalcSize).
+        SetWindowPos(Handle, 0, 0, 0, 0, 0, 0x0027 /* SWP_NOSIZE | SWP_NOMOVE | SWP_NOZORDER | SWP_FRAMECHANGED */);
+    }
+
+    protected override void WndProc(ref Message m)
+    {
+        if (!WindowFrame.CalcSize(this, ref m)) base.WndProc(ref m);
     }
 
     protected override void OnFormClosed(FormClosedEventArgs e)
     {
+        _pipe?.Dispose();
         _online.Dispose();
         base.OnFormClosed(e);
     }
 
     [DllImport("dwmapi.dll")]
     private static extern int DwmSetWindowAttribute(IntPtr window, int attribute, ref int value, int size);
+
+    [DllImport("user32.dll")]
+    private static extern bool SetWindowPos(IntPtr window, IntPtr after, int x, int y, int width, int height, uint flags);
 
     // The window and taskbar icon: assets\logo.ico, the same one the exe carries, with every size
     // Windows asks for.

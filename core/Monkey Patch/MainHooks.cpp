@@ -18,6 +18,8 @@ import component;
 #include "DFEngine.h"
 #include "Mem/Memory.h"
 #include "Stilwater/Trainer.h"
+#include "Stilwater/CheatFlag.h"
+#include "Stilwater/InviteMenu.h"
 #include "Stilwater/FirstPerson.h"
 #include "Stilwater/CoopPorts.h"
 #include "Stilwater/OnlineServer.h"
@@ -878,28 +880,7 @@ void cus_FrameToggles() {
 		addsubtitles(subtitles.c_str(), delay, duration, whateverthefuck);
 		Logger::TypedLog(CHN_DEBUG, "Player Pos + Orient: <{:.6f} {:.6f} {:.6f}> [{:.6f}]\n", hkg_playerPosition[0], hkg_playerPosition[1], hkg_playerPosition[2], hkg_camOrient);
 	}
-#if !RELOADED // change this up later when thaRow gets 3+ player co-op?
-	if (IsKeyPressed(VK_F7, false)) {
-
-		if (hasCheatMessageBeenSeen == 1 || Debug::CMPatches_DisableCheatFlag.IsApplied())
-			TeleportToWaypoint();
-			
-		
-
-		if (!Debug::CMPatches_DisableCheatFlag.IsApplied()) {
-			if (hasCheatMessageBeenSeen == 0) {
-				const wchar_t* JuicedF7Cheat =
-					L"The F7 key hosts a command that allows you to teleport to your waypoint on your map.\n"
-					L"Pressing F7 again will teleport you to your Waypoint destination and flag your save as cheated.";
-				__asm pushad
-				AddMessage(L"Juiced", JuicedF7Cheat);
-				__asm popad
-
-				hasCheatMessageBeenSeen = 1;
-			}
-		}
-	}
-#endif
+	// Stilwater: Juiced's F7 teleport-to-waypoint is in the Insert menu (Trainer tab) instead.
 	if (IsKeyPressed(VK_DELETE, false) && IsInSaveMenu()) {
 		DeletionMode = true;
 		*EnterPressed = true;
@@ -1050,7 +1031,8 @@ void Noclip() {
 #endif
 typedef void(*LoadLevelT)();
 LoadLevelT LoadLevel = (LoadLevelT)0x73C000;
-char LUA_Key = VK_INSERT;
+// Stilwater: ~ (the key left of 1) opens the console; Insert is the invite menu.
+char LUA_Key = (char)VK_OEM_3;
 #if !RELOADED
 static bool play_as_refresh_request = false;
 void LuaExecutor() {
@@ -1291,9 +1273,6 @@ int early_render_hook() {
 			PrintDBGGarble();
 		}
 	}
-#if !RELOADED
-	Trainer::Draw();
-#endif
 	return ((int(*)(void))0xD14770)();
 }
 #endif
@@ -1333,8 +1312,10 @@ int RenderLoopStuff_Hacked()
 		LuaExecutor();
 		Noclip();
 		Trainer::Update();
+		InviteMenu::Update();
 		FirstPerson::Update();
     #endif
+		CheatFlag::Update();
 	if (Render3D::VFXP_fixFog)
 		FogTest();
 
@@ -1638,7 +1619,7 @@ int WINAPI Hook_WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCm
 	patchJmp((void*)0x697339, sub_73D900);
 
 	
-		LUA_Key = GameConfig::GetValue("Debug", "ExecutorBind", VK_INSERT, "Changes the keybind for Lua Executor. refer to https://learn.microsoft.com/en-us/windows/win32/inputdev/virtual-key-codes for the key \"value\"s. (Clippy95)");
+		LUA_Key = GameConfig::GetValue("Debug", "ExecutorBind", VK_OEM_3,"Changes the keybind for Lua Executor. refer to https://learn.microsoft.com/en-us/windows/win32/inputdev/virtual-key-codes for the key \"value\"s. (Clippy95)");
 	InGameConfig::AddOptions();
 	General::TopWinMain();
 	CrashFixes::Init();
@@ -1727,9 +1708,11 @@ int WINAPI Hook_WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCm
 	Render2D::InitMenVerNum();
 #if !RELOADED && !JLITE
 	Trainer::Init();
+	InviteMenu::Init();
 	FirstPerson::Init();
 #endif
 	CoopPorts::Init();
+	CheatFlag::Init();
 
 #if RELOADED
 	Reloaded::Init();

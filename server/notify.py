@@ -41,7 +41,8 @@ def post(text: str, *names: str):
     if not WEBHOOK or any(TEST_NAME.match(n or "") for n in names):
         return
     global _flushing
-    _pending.append(text.replace("@", "@​"))
+    # Plain text: names can't ping anyone or turn into Discord formatting.
+    _pending.append(re.sub(r"([\\*_~`|>])", r"\\\1", text).replace("@", "@​"))
     if not _flushing:
         _flushing = True
         asyncio.get_running_loop().call_later(BATCH_SECONDS, _flush)
@@ -54,7 +55,7 @@ def signed_in(nick: str):
         timer.cancel()          # back within the grace period: still the same visit
     elif nick not in _online:
         _online[nick] = time.monotonic()
-        post(f"🟢 **{nick}** is online", nick)
+        post(f"{nick} is online", nick)
 
 
 def signed_out(nick: str):
@@ -67,7 +68,7 @@ def _went_offline(nick: str):
     _going.pop(nick, None)
     since = _online.pop(nick, None)
     if since is not None:
-        post(f"⚫ {nick} went offline after {_duration(time.monotonic() - since - OFFLINE_GRACE)}", nick)
+        post(f"{nick} went offline after {_duration(time.monotonic() - since - OFFLINE_GRACE)}", nick)
 
 
 def game_hosted(address: str, name: str, *names: str):
@@ -78,7 +79,7 @@ def game_hosted(address: str, name: str, *names: str):
         timer.cancel()          # re-hosted straight away: the same game carries on
     elif address not in _games:
         _games[address] = (name, names, time.monotonic())
-        post(f"🎮 **{name}** is hosting a co-op game", name, *names)
+        post(f"{name} is hosting co-op", name, *names)
 
 
 def game_closed(address: str):
@@ -89,7 +90,7 @@ def game_closed(address: str):
 def _game_ended(address: str):
     _ending.pop(address, None)
     name, names, started = _games.pop(address, ("?", (), time.monotonic()))
-    post(f"🎮 {name}'s co-op game ended after {_duration(time.monotonic() - started - REHOST_GRACE)}", name, *names)
+    post(f"{name}'s co-op ended after {_duration(time.monotonic() - started - REHOST_GRACE)}", name, *names)
 
 
 def _duration(seconds: float) -> str:

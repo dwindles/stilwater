@@ -114,7 +114,7 @@ class NatNeg(asyncio.DatagramProtocol):
             log.info("natneg %s: %s:%d <-> %s:%d", session.cookie.hex(), *a.public(), *b.public())
             names = [" & ".join(self.nicks_at(c.public()[0])) or "someone" for c in (a, b)]
             if names[0] != names[1]:        # the same names: players on one network, nothing to say
-                notify.post(f"🔗 {names[0]} and {names[1]} connected for co-op", *names,
+                notify.post(f"{names[0]} and {names[1]} connected for co-op", *names,
                             *self.nicks_at(a.public()[0]), *self.nicks_at(b.public()[0]))
         for me, other in ((a, b), (b, a)):
             if me.acked:

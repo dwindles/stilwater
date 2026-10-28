@@ -67,7 +67,7 @@ class Player:
         assert command == "nur", (command, fields)
         self.sock.close()
 
-    def login(self):
+    def login(self, launcher: bool = False):
         server_challenge = self.connect()
         client_challenge = gs.challenge(32)
         user = f"{self.nick}@{self.email}"
@@ -75,7 +75,7 @@ class Player:
         self.send(("login", ""), ("challenge", client_challenge), ("user", user), ("partnerid", 0),
                   ("response", gs.login_hash(password_md5, user, client_challenge, server_challenge)),
                   ("firewall", 1), ("port", 0), ("productid", gs.PRODUCT_ID), ("gamename", gs.GAME_NAME),
-                  ("namespaceid", 1), ("sdkrevision", 11), ("quiet", 0), ("id", 1))
+                  ("namespaceid", 1), ("sdkrevision", 11), ("quiet", 0), *([("swlauncher", 1)] if launcher else []), ("id", 1))
         command, fields = self.read()
         assert command == "lc" and fields["lc"] == "2", (command, fields)
         assert fields["proof"] == gs.login_hash(password_md5, user, server_challenge, client_challenge), "bad proof"
@@ -166,14 +166,19 @@ def main():
     b.send(("status", 1), ("sesskey", b.session_key), ("statstring", "Playing co-op"), ("locstring", "here"))
     a.read_until("bm", "Playing co-op", bm=100, f=b.profile_id)
     check("status reaches friend", True)
+    # b also signs in from the launcher; the game session (b) stays signed in.
+    bl = Player(b.nick, b.email, b.password)
+    bl.login(launcher=True)
     a.send(("bm", 1), ("sesskey", a.session_key), ("t", b.profile_id), ("msg", "STILWATER_INVITE|" + a.nick))
-    check("invite message", b.read_until("bm", bm=1)["msg"].startswith("STILWATER_INVITE|"))
+    check("invite message reaches the launcher", bl.read_until("bm", bm=1)["msg"].startswith("STILWATER_INVITE|"))
+    a.send(("status", 1), ("sesskey", a.session_key), ("statstring", "In the menus"), ("locstring", ""))
+    b.read_until("bm", "In the menus", bm=100, f=a.profile_id)
+    check("game stays signed in beside the launcher", True)
+    b_game, b = b, bl
     a.send(("getprofile", ""), ("sesskey", a.session_key), ("profileid", b.profile_id), ("id", 7))
     check("getprofile", a.read_until("pi")["nick"] == b.nick)
 
-    # Profile pictures and bios (the launcher's \swhello\ extensions).
-    a.send(("swhello", ""))
-    b.send(("swhello", ""))
+    # Profile pictures and bios (launcher extensions; a stays a game session, b is b's launcher).
     picture = b"\xff\xd8\xff\xe0" + secrets.token_bytes(3000)
     a.send(("swsetprofile", ""), ("sesskey", a.session_key), ("bio", "Stilwater test"),
            ("avatar", base64.b64encode(picture).decode()), ("id", 8))
@@ -206,6 +211,8 @@ def main():
         elif data[:3] == b"\xfe\xfd\x0a":
             registered = True
     check("host registered", registered)
+    b.send(("swjoin", ""), ("sesskey", b.session_key), ("profileid", a.profile_id), ("id", 12))
+    check("accepting an invite pins the joiner's list", b.read_until("swjoined", id=12)["profileid"] == str(a.profile_id))
 
     # A player fetches the list.
     sb = socket.create_connection((HOST, 28910), timeout=5)

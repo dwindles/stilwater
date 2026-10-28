@@ -80,6 +80,7 @@ class Session:
         self.port = 0
         self.closed = False
         self.launcher = False       # the Stilwater launcher, not the game: it takes the sw* extensions
+        self.ticket = ""
 
     def send(self, *pairs):
         if self.closed:
@@ -111,9 +112,27 @@ class Session:
 class Presence:
     def __init__(self, accounts: Accounts):
         self.accounts = accounts
-        self.online: dict[int, Session] = {}
-        # Login tickets (\lt\ in the login reply) -> profile id; Sake requests carry them.
+        # Each player can be signed in twice at once: in the game and in the launcher (which says so
+        # with \swlauncher\1 in its login). profile id -> {is launcher: session}.
+        self.sessions: dict[int, dict[bool, Session]] = {}
+        # Login tickets (\lt\ in the login reply) -> profile id; Sake and shared mods requests carry them.
         self.tickets: dict[str, int] = {}
+        self.master = None          # set by main.py: an accepted invite pins the joiner's game list
+
+    @property
+    def online(self) -> dict[int, "Session"]:
+        """Who is signed in, by the session friends see: the game's when it's running."""
+        return {pid: self.primary(pid) for pid in self.sessions}
+
+    def primary(self, profile_id: int):
+        both = self.sessions.get(profile_id, {})
+        return both.get(False) or both.get(True)
+
+    def deliver(self, profile_id: int, *pairs, launcher_only: bool = False):
+        """Sends a message to every session of a player (or only their launcher's)."""
+        for is_launcher, session in self.sessions.get(profile_id, {}).items():
+            if is_launcher or not launcher_only:
+                session.send(*pairs)
 
     # --- gpcm
 
@@ -148,11 +167,17 @@ class Presence:
             session.send(("ka", ""))
 
     def _signed_out(self, session: Session):
-        if session.profile_id and self.online.get(session.profile_id) is session:
-            del self.online[session.profile_id]
+        both = self.sessions.get(session.profile_id, {})
+        if session.profile_id and both.get(session.launcher) is session:
+            del both[session.launcher]
+            self.tickets.pop(session.ticket, None)
+            log.info("%s signed out of the %s", session.nick, "launcher" if session.launcher else "game")
+            if both:
+                self._tell_friends(self.primary(session.profile_id))     # still in the other one
+                return
+            del self.sessions[session.profile_id]
             session.status, session.status_text, session.location = 0, "Offline", ""
             self._tell_friends(session)
-            log.info("%s signed out", session.nick)
             notify.signed_out(session.nick)
 
     def nicks_at(self, ip: str) -> list[str]:
@@ -160,10 +185,11 @@ class Presence:
         return [s.nick for s in self.online.values() if s.address[0] == ip]
 
     def _tell_friends(self, session: Session):
+        """Tells session's friends its status, if it's the session they see."""
+        if session.status and self.primary(session.profile_id) is not session:
+            return
         for friend in self.accounts.friends(session.profile_id):
-            other = self.online.get(friend)
-            if other:
-                other.send(*session.status_message())
+            self.deliver(friend, *session.status_message())
 
     def cmd_ka(self, session: Session, fields):
         pass
@@ -195,22 +221,26 @@ class Presence:
             log.info("bad password for %s from %s", profile["nick"], session.address[0])
             return session.error(GP_LOGIN_BAD_PASSWORD, "The password is incorrect.", True, request_id)
 
-        previous = self.online.get(profile["id"])
+        # Signing in again in the same place (game or launcher) replaces that session; the game and
+        # the launcher stay signed in side by side.
+        session.launcher = session.launcher or fields.get("swlauncher") == "1"
+        both = self.sessions.setdefault(profile["id"], {})
+        previous = both.get(session.launcher)
         if previous:
             previous.error(GP_FORCED_DISCONNECT, "You signed in somewhere else.", True)
             previous.profile_id = 0
+            self.tickets.pop(previous.ticket, None)
             previous.close()
         session.profile_id = profile["id"]
         session.nick = profile["nick"]
         session.session_key = secrets.randbelow(0x7FFFFFFF - 1) + 1
         session.port = int(fields.get("port", "0") or 0)
         session.status, session.status_text = 1, "Online"
-        self.online[session.profile_id] = session
+        both[session.launcher] = session
         self.accounts.touch(session.profile_id)
         proof = gs.login_hash(profile["password_md5"], hashed_user, session.challenge, client_challenge)
         ticket = secrets.token_urlsafe(16)[:22] + "__"
-        for old in [t for t, owner in self.tickets.items() if owner == profile["id"]]:
-            del self.tickets[old]
+        session.ticket = ticket
         self.tickets[ticket] = profile["id"]
         session.send(("lc", 2), ("sesskey", session.session_key), ("proof", proof), ("userid", profile["user_id"]),
                      ("profileid", profile["id"]), ("uniquenick", profile["nick"]), ("lt", ticket), ("id", request_id))
@@ -251,7 +281,7 @@ class Presence:
         nick = fields.get("uniquenick") or fields.get("nick", "")
         profile = self.accounts.create(fields.get("email", ""), nick, gs.md5(password))
         log.info("new account %s", profile["nick"])
-        notify.post(f"🆕 New account: **{profile['nick']}**", profile["nick"])
+        notify.post(f"New account: {profile['nick']}", profile["nick"])
         return profile
 
     def cmd_logout(self, session: Session, fields):
@@ -296,11 +326,9 @@ class Presence:
             return self._accept(session, target)
         reason = fields.get("reason", "")[:200].replace("|", "")
         self.accounts.request(session.profile_id, target, reason)
-        notify.post(f"👋 {session.nick} sent {self._nick(target)} a friend request", session.nick, self._nick(target))
-        other = self.online.get(target)
-        if other:
-            other.send(("bm", BM_REQUEST), ("f", session.profile_id),
-                       ("msg", f"{reason}|signed|{signature(session.profile_id, target)}"))
+        notify.post(f"{session.nick} sent {self._nick(target)} a friend request", session.nick, self._nick(target))
+        self.deliver(target, ("bm", BM_REQUEST), ("f", session.profile_id),
+                     ("msg", f"{reason}|signed|{signature(session.profile_id, target)}"))
 
     def cmd_authadd(self, session: Session, fields):
         try:
@@ -316,13 +344,13 @@ class Presence:
 
     def _accept(self, session: Session, other_id: int):
         self.accounts.befriend(session.profile_id, other_id)
-        notify.post(f"🤝 **{session.nick}** and **{self._nick(other_id)}** are now friends", session.nick, self._nick(other_id))
-        other = self.online.get(other_id)
+        notify.post(f"{session.nick} and {self._nick(other_id)} are now friends", session.nick, self._nick(other_id))
+        other = self.primary(other_id)
         if other:
-            other.send(("bm", BM_AUTH), ("f", session.profile_id),
-                       ("msg", f"I have authorized your request to add me to your list|signed|{signature(session.profile_id)}"))
-            other.send(*session.status_message())
-            session.send(*other.status_message())
+            self.deliver(other_id, ("bm", BM_AUTH), ("f", session.profile_id),
+                         ("msg", f"I have authorized your request to add me to your list|signed|{signature(session.profile_id)}"))
+            self.deliver(other_id, *self.primary(session.profile_id).status_message())
+            self.deliver(session.profile_id, *other.status_message())
         else:
             session.send(("bm", BM_STATUS), ("f", other_id), ("msg", "|s|0|ss|Offline|ls||ip|0|p|0|qm|0"))
 
@@ -333,9 +361,7 @@ class Presence:
             return
         self.accounts.unfriend(session.profile_id, other_id)
         notify.post(f"{session.nick} removed {self._nick(other_id)} as a friend", session.nick, self._nick(other_id))
-        other = self.online.get(other_id)
-        if other:
-            other.send(("bm", BM_REVOKE), ("f", session.profile_id), ("msg", "I have revoked you from my list."))
+        self.deliver(other_id, ("bm", BM_REVOKE), ("f", session.profile_id), ("msg", "I have revoked you from my list."))
 
     def cmd_bm(self, session: Session, fields):
         try:
@@ -347,10 +373,11 @@ class Presence:
             return
         body = fields.get("msg", "")[:1024]
         if kind == BM_MESSAGE and body.startswith("STILWATER_INVITE|"):
-            notify.post(f"✉️ {session.nick} invited {self._nick(target)} to co-op", session.nick, self._nick(target))
-        other = self.online.get(target)
-        if other:
-            other.send(("bm", kind), ("f", session.profile_id), ("msg", body))
+            notify.post(f"{session.nick} invited {self._nick(target)} to co-op", session.nick, self._nick(target))
+        if target in self.sessions:
+            # The launcher's invites are text the game would show as a chat message: launchers only.
+            self.deliver(target, ("bm", kind), ("f", session.profile_id), ("msg", body),
+                         launcher_only=body.startswith("STILWATER_"))
         elif kind == BM_MESSAGE:
             self.accounts.store_message(session.profile_id, target, body)
 
@@ -359,11 +386,10 @@ class Presence:
             target = int(fields.get("profileid", "0"))
         except ValueError:
             return
-        other = self.online.get(target)
-        if other and self.accounts.are_friends(session.profile_id, target):
-            notify.post(f"✉️ {session.nick} invited {self._nick(target)} to co-op", session.nick, self._nick(target))
-            other.send(("bm", BM_INVITE), ("f", session.profile_id),
-                       ("msg", f"|p|{fields.get('productid', gs.PRODUCT_ID)}|l|{fields.get('location', '')}"))
+        if target in self.sessions and self.accounts.are_friends(session.profile_id, target):
+            notify.post(f"{session.nick} invited {self._nick(target)} to co-op", session.nick, self._nick(target))
+            self.deliver(target, ("bm", BM_INVITE), ("f", session.profile_id),
+                         ("msg", f"|p|{fields.get('productid', gs.PRODUCT_ID)}|l|{fields.get('location', '')}"))
 
     def cmd_updatepro(self, session: Session, fields):
         pass
@@ -378,7 +404,41 @@ class Presence:
     # game doesn't know, so they only go to sessions that said \swhello\.
 
     def cmd_swhello(self, session: Session, fields):
+        if session.launcher:
+            return
+        # A launcher from before \swlauncher said so only after signing in: file it as the launcher.
+        both = self.sessions.get(session.profile_id, {})
         session.launcher = True
+        if both.get(False) is session:
+            del both[False]
+            previous = both.get(True)
+            if previous:
+                previous.error(GP_FORCED_DISCONNECT, "You signed in somewhere else.", True)
+                previous.profile_id = 0
+                self.tickets.pop(previous.ticket, None)
+                previous.close()
+            both[True] = session
+
+    def cmd_swjoin(self, session: Session, fields):
+        r"""\swjoin\profileid\<host>: the player accepted host's invite. For the next few minutes
+        their game's co-op list (matchmaking) shows only host's game, so the game joins it."""
+        request_id = fields.get("id", "1")
+        try:
+            host_id = int(fields.get("profileid", "0"))
+        except ValueError:
+            host_id = 0
+        host = self.sessions.get(host_id, {}).get(False)
+        if not self.accounts.are_friends(session.profile_id, host_id):
+            return session.error(GP_PARSE, "You can only join friends.", False, request_id)
+        if host is None:
+            return session.error(GP_PARSE, f"{self._nick(host_id)} isn't in the game.", False, request_id)
+        joiner = self.sessions.get(session.profile_id, {})
+        for s in joiner.values():
+            if self.master:
+                self.master.pin(s.address[0], host.address[0])
+        log.info("%s is joining %s", session.nick, host.nick)
+        notify.post(f"{session.nick} is joining {host.nick}", session.nick, host.nick)
+        session.send(("swjoined", ""), ("profileid", host_id), ("id", request_id))
 
     def cmd_swsetprofile(self, session: Session, fields):
         """\\swsetprofile\\ with bio and/or avatar (base64 JPEG or PNG; empty removes it)."""
@@ -393,11 +453,10 @@ class Presence:
         session.send(("swprofile", ""), ("profileid", session.profile_id), ("hash", digest), ("id", request_id))
         if avatar is not None:
             log.info("%s changed their profile picture", session.nick)
-            notify.post(f"🖼️ {session.nick} updated their profile picture", session.nick)
+            notify.post(f"{session.nick} updated their profile picture", session.nick)
         for friend in self.accounts.friends(session.profile_id):
-            other = self.online.get(friend)
-            if other and other.launcher:
-                other.send(("swprofilechanged", ""), ("profileid", session.profile_id), ("hash", digest))
+            self.deliver(friend, ("swprofilechanged", ""), ("profileid", session.profile_id), ("hash", digest),
+                         launcher_only=True)
 
     def cmd_swgetprofile(self, session: Session, fields):
         """\\swgetprofile\\profileid\\<id>\\have\\<hash>: the picture comes only when it differs from have."""

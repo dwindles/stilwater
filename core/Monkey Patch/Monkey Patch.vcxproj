@@ -344,6 +344,9 @@ copy /Y "$(TargetDir)DFEngine.dll" "E:\Steam\steamapps\common\Saints Row 2\DFEng
     <ClCompile Include="Stilwater\FirstPerson.cpp" />
     <ClCompile Include="Stilwater\RimJobsGuard.cpp" />
     <ClCompile Include="Stilwater\Trainer.cpp" />
+    <ClCompile Include="Stilwater\CheatFlag.cpp" />
+    <ClCompile Include="Stilwater\Overlay.cpp" />
+    <ClCompile Include="Stilwater\InviteMenu.cpp" />
     <ClCompile Include="Stilwater\Horns.cpp" />
     <ClCompile Include="Stilwater\CoopPorts.cpp" />
     <ClCompile Include="Stilwater\OnlineServer.cpp" />
@@ -405,6 +408,9 @@ copy /Y "$(TargetDir)DFEngine.dll" "E:\Steam\steamapps\common\Saints Row 2\DFEng
     <ClInclude Include="Stilwater\FirstPerson.h" />
     <ClInclude Include="Stilwater\RimJobsGuard.h" />
     <ClInclude Include="Stilwater\Trainer.h" />
+    <ClInclude Include="Stilwater\CheatFlag.h" />
+    <ClInclude Include="Stilwater\Overlay.h" />
+    <ClInclude Include="Stilwater\InviteMenu.h" />
     <ClInclude Include="Stilwater\Horns.h" />
     <ClInclude Include="Stilwater\CoopPorts.h" />
     <ClInclude Include="Stilwater\OnlineServer.h" />

@@ -34,7 +34,15 @@ window.mock = {
       case "app.log": return "18:26:01 Stilwater runtime loaded\n18:26:02 Hooks installed\n18:26:05 Online: signed in as dee";
       case "app.nextVersion": return "0.2.2";
       case "mods.code": return "7F3A-19C4";
+      case "mods.share": return new Promise(r => setTimeout(() => r({ code: "SW-7KQ2-M4HD", skipped: ["Lowrider Pack/readme.html"] }), 800));
+      case "mods.lookUp": return { code: "SW-7KQ2-M4HD", by: "angel", mods: [
+        { name: "Lowrider Pack", files: 24, mb: 31.4 }, { name: "Better Rain", files: 3, mb: 1.2 } ] };
+      case "mods.install": return new Promise(r => setTimeout(() => r(2), 800));
+      case "mods.addFolder": case "mods.addZip": return "Lowrider Pack";
+      case "mods.remove": return null;
       case "mods.list": return { mods: [
+        { name: "Lowrider Pack", display: "Lowrider Pack", enabled: true, core: false, yours: true, files: 24, mb: 31.4 },
+        { name: "Better Rain", display: "Better Rain", enabled: false, core: false, yours: true, files: 3, mb: 1.2 },
         { name: "STILWATER - Glock Switch", display: "Glock Switch", enabled: true, core: false, files: 5, mb: 6.3 },
         { name: "STILWATER - Micro Draco", display: "Micro Draco", enabled: true, core: false, files: 4, mb: 0.5 },
         { name: "STILWATER - iPhone 17 Pro", display: "iPhone 17 Pro", enabled: true, core: false, files: 4, mb: 0.4 },

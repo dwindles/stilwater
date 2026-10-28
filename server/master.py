@@ -96,6 +96,12 @@ class Master:
         self.nicks_at = nicks_at        # who is signed in from an address, to name hosts in the feed
         self.transport: asyncio.DatagramTransport | None = None
         self.probe: asyncio.DatagramTransport | None = None
+        # Players who accepted an invite: their address -> (the host's address, until when). Their
+        # list then holds only the host's game, so co-op matchmaking joins it (presence.cmd_swjoin).
+        self.pins: dict[str, tuple[str, float]] = {}
+
+    def pin(self, player_ip: str, host_ip: str, seconds: float = 180):
+        self.pins[player_ip] = (host_ip, time.monotonic() + seconds)
 
     async def start(self, bind: str):
         loop = asyncio.get_running_loop()
@@ -254,11 +260,17 @@ class Master:
                 body += b"\0" + key.encode("latin-1", "replace") + b"\0"
             body += b"\0"                                  # no popular values
             matcher = Filter(filter_text)
-            hosts = [h for h in self.hosts.values() if h.matches(game_for) and matcher.matches(h.fields)][:limit]
+            hosts = [h for h in self.hosts.values() if h.matches(game_for) and matcher.matches(h.fields)]
+            pinned, until = self.pins.get(peer[0], ("", 0))
+            if pinned and time.monotonic() < until:
+                hosts = [h for h in self.hosts.values() if h.matches(game_for) and h.address[0] == pinned and h.registered] \
+                    or hosts
+            hosts = hosts[:limit]
             for host in hosts:
                 body += host.entry(keys)
             body += b"\0\xff\xff\xff\xff"
-            log.info("list for %s (%s): %d hosts, filter %r", peer[0], game_for, len(hosts), filter_text)
+            log.info("list for %s (%s): %d hosts, filter %r%s", peer[0], game_for, len(hosts), filter_text,
+                     f", pinned to {pinned}" if pinned and time.monotonic() < until else "")
         writer.write(cipher.encrypt(body))
         return cipher
 

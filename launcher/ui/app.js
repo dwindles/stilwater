@@ -185,6 +185,7 @@ function setGameRunning(running) {
   gameRunning = running;
   document.body.classList.toggle("game-running", running);
   pingLoop();
+  updateMusic();
 }
 
 // --- server ping: a round trip to the server every second, scrolling right to left
@@ -380,16 +381,28 @@ async function loadMods() {
   api("mods.code").then(code => $("#mods-code").textContent = code);
 }
 function renderMods() {
-  const group = (title, list) => list.length ? `
-    <div class="section"><h2>${title}</h2><span>${list.filter(m => m.enabled).length} of ${list.length} on</span></div>
-    <div class="list">${list.map(m => `
+  const rows = (list, removable) => list.map(m => `
       <div class="row mod ${m.enabled ? "" : "off"}">
         <div class="row-text"><b>${esc(m.display)}</b><span>${m.files} files · ${m.mb.toFixed(1)} MB</span></div>
+        ${removable ? `<button class="button small ghost remove" data-remove="${esc(m.name)}">Remove</button>` : ""}
         <label class="switch"><input type="checkbox" data-mod="${esc(m.name)}" ${m.enabled ? "checked" : ""}><span></span></label>
-      </div>`).join("")}</div>` : "";
-  $("#mods-body").innerHTML =
-    group("Stilwater", mods.mods.filter(m => !m.core)) +
+      </div>`).join("");
+  const group = (title, list) => list.length ? `
+    <div class="section"><h2>${title}</h2><span>${list.filter(m => m.enabled).length} of ${list.length} on</span></div>
+    <div class="list">${rows(list, false)}</div>` : "";
+  const yours = mods.mods.filter(m => m.yours);
+  $("#mods-body").innerHTML = `
+    <div class="section"><h2>Your mods</h2>${yours.length ? `<span>${yours.filter(m => m.enabled).length} of ${yours.length} on</span>` : ""}
+      <div class="actions"><button class="button small" id="add-folder">Add folder</button><button class="button small" id="add-zip">Add .zip</button></div></div>
+    ${yours.length ? `<div class="list">${rows(yours, true)}</div>` : `<p class="empty">Add a mod's folder or .zip. It goes into the game's mods and comes first, so its files win.</p>`}` +
+    group("Stilwater", mods.mods.filter(m => !m.core && !m.yours)) +
     group("Juiced Patch", mods.mods.filter(m => m.core));
+  $("#add-folder").onclick = () => addMod("mods.addFolder");
+  $("#add-zip").onclick = () => addMod("mods.addZip");
+  document.querySelectorAll("[data-remove]").forEach(b => b.onclick = () => modal(`
+      <h2>Remove ${esc(b.dataset.remove)}?</h2><p class="muted">Its folder goes to the Recycle Bin.</p>
+      <div class="modal-buttons"><button class="button ghost" data-close>Cancel</button><button class="button danger" id="confirm-remove">Remove</button></div>`,
+    close => $("#confirm-remove").onclick = () => { close(); run(async () => { await api("mods.remove", { name: b.dataset.remove }); await loadMods(); }, "Removed."); }));
   document.querySelectorAll("[data-mod]").forEach(box => box.onchange = async () => {
     const name = box.dataset.mod;
     try {
@@ -402,6 +415,60 @@ function renderMods() {
 }
 $("#open-mods").onclick = () => api("app.openFolder", { which: "mods" });
 $("#copy-code").onclick = () => { navigator.clipboard.writeText($("#mods-code").textContent); toast("Mods code copied."); };
+
+async function addMod(method) {
+  const name = await run(() => api(method));
+  if (!name) return;
+  await loadMods();
+  toast(`Added ${name}. It loads the next time the game starts.`);
+}
+
+// --- sharing mods with a code (ModShare.cs, server/mods.py)
+function modsBusy(text) {
+  $("#mods-progress").hidden = !text;
+  $("#mods-progress").textContent = text || "";
+  $("#share-mods").disabled = $("#get-mods").disabled = !!text;
+}
+on("modsProgress", text => { if (!$("#mods-progress").hidden) $("#mods-progress").textContent = text; });
+$("#share-mods").onclick = async () => {
+  modsBusy("Reading your mods…");
+  const r = await run(() => api("mods.share"));
+  modsBusy(null);
+  if (!r) return;
+  $("#share-code").textContent = r.code;
+  $("#share-code").hidden = $("#copy-share").hidden = false;
+  navigator.clipboard.writeText(r.code);
+  toast(r.skipped.length
+    ? `Code copied. Left out ${r.skipped.length === 1 ? "1 file that isn't a game file" : `${r.skipped.length} files that aren't game files`} (${r.skipped.slice(0, 3).join(", ")}${r.skipped.length > 3 ? " …" : ""}).`
+    : "Code copied. Send it to whoever should get your mods.");
+};
+$("#copy-share").onclick = () => { navigator.clipboard.writeText($("#share-code").textContent); toast("Code copied."); };
+$("#get-code").onkeydown = e => { if (e.key === "Enter") $("#get-mods").click(); };
+$("#get-mods").onclick = async () => {
+  modsBusy("Looking up the code…");
+  const share = await run(() => api("mods.lookUp", { code: $("#get-code").value }));
+  modsBusy(null);
+  if (!share) return;
+  const installed = new Set(mods.mods.map(m => m.name.toLowerCase()));
+  const mb = share.mods.reduce((sum, m) => sum + m.mb, 0);
+  modal(`
+    <h2>Mods from ${esc(share.by)}</h2>
+    <p class="muted small">${share.code} · ${share.mods.length} mod${share.mods.length === 1 ? "" : "s"} · ${mb.toFixed(1)} MB. They're switched on and load the next time the game starts.</p>
+    <div class="list" style="margin-top:12px">${share.mods.map(m => `
+      <div class="row"><div class="row-text"><b>${esc(m.name)}</b><span>${m.files} files · ${m.mb.toFixed(1)} MB${installed.has(m.name.toLowerCase()) ? " · replaces yours" : ""}</span></div></div>`).join("")}</div>
+    <p class="muted small" style="margin-top:10px">Only install mods from people you trust.</p>
+    <div class="modal-buttons"><button class="button ghost" data-close>Cancel</button><button class="button accent" id="do-install">Install</button></div>`,
+    close => $("#do-install").onclick = async () => {
+      close();
+      modsBusy("Downloading…");
+      const count = await run(() => api("mods.install", { code: share.code }));
+      modsBusy(null);
+      if (count == null) return;
+      $("#get-code").value = "";
+      await loadMods();
+      toast(`Installed ${count} mod${count === 1 ? "" : "s"} from ${share.by}.`);
+    });
+};
 
 // --- Settings
 let settings = null, changes = {};
@@ -442,8 +509,123 @@ function renderSettings() {
 $("#save").onclick = () => run(async () => { await api("settings.save", { values: changes }); await loadSettings(); }, "Saved. Applies next time the game starts.");
 $("#discard").onclick = () => { changes = {}; renderSettings(); };
 
+// --- window: the top bar is the title bar
+$(".topbar").addEventListener("mousedown", e => {
+  if (e.button !== 0 || e.target.closest("button, input, a")) return;
+  e.preventDefault();
+  // Windows doesn't see the second click of a double click once the first started a drag.
+  const now = Date.now();
+  if (now - (window.lastBarClick || 0) < 400) { window.lastBarClick = 0; api("window.maximize"); return; }
+  window.lastBarClick = now;
+  api("window.drag", { edge: "" });
+});
+document.querySelectorAll(".grip").forEach(g => g.addEventListener("mousedown", e => {
+  if (e.button === 0) { e.preventDefault(); api("window.drag", { edge: g.dataset.edge }); }
+}));
+document.querySelectorAll("[data-window]").forEach(b => b.onclick = () => api("window." + b.dataset.window));
+on("window", w => {
+  document.body.classList.toggle("maximized", w.maximized);
+  $("#maximize").innerHTML = w.maximized ? "&#xE923;" : "&#xE922;";
+  $("#maximize").title = w.maximized ? "Restore" : "Maximize";
+});
+
+// --- music: the "it" playlist, barely audible behind the launcher. The SoundCloud player runs in
+// its own frame and only gets messages (no SoundCloud script runs in the launcher's page).
+const MUSIC_VOLUME = 5;
+const MUSIC_PLAYLIST = "https://api.soundcloud.com/playlists/soundcloud%3Aplaylists%3A2314201821?secret_token=s-32Y004h2xSZ";
+const MUSIC_ORIGIN = "https://w.soundcloud.com";
+const MUSIC_CREDITS = [
+  ["Computer man & ant. adventure.ᐟ", "I am evan from lunenburg / panax flower"], ["serpuline", "co2 leak"],
+  ["devva", "how it feels to accidentally touch somebody +poem"], ["4 maki tabla.. the chuqi chinchay & Ig.com_user157d61g44", "Yr so beautifull"],
+  ["famora19", "For a brief moment . you were my ♪ Everything ♪"], ["cloudy feat. audry", "Net weight u.s.a."],
+  ["Only Theater of Ain", "Blue Sky Burn"], ["raf shermen & 南部犯罪份子", "凶手"], ["atum bruit", "bug meet world"],
+  ["devva", "naptime +ireallylovegod"], ["Scooby & 100%sweet꩜cafe", "christmas119"], ["Computer man", "The drug-resistant sickness unto death"],
+  ["vanc", "µ-sic for elysian fields"], ["smile gang", "rai - notebooker (stationery)"], ["serpuline", "#dame"],
+  ["egoseed", "a scrapbook year"], ["mon1ka", "i swerve"], ["hayden kolb", "stars over me"],
+  ["Connect the Dots", "forecast - clouds and light showers"], ["Connect the Dots", "Sidewalk stroll to Cranberry Park"],
+  ["MASSI", "Scaling through Life"], ["Connect the Dots", "Somewhere City"], ["minoyimn", "You Know Me"],
+  ["tal egg", "i did my first ost :' )"], ["serpuline", "my song about the wattersons family get left behind"],
+  ["Professional coaxing to sleep for 100 years", "mymelodysound15"], ["stupid picture", "blossom choir"],
+  ["Bryce Hayashi", "Bryce's Final Club"], ["ant. adventure.ᐟ", "tinsel and tinker street. !"], ["Reserv", "Fill Your Boots"],
+];
+function renderCredits(credits) {
+  $("#credits").innerHTML = `Music: “it”, a SoundCloud playlist by devuandoru. ` +
+    credits.map(([who, what]) => `${esc(who)} – ${esc(what)}`).join(" · ");
+}
+renderCredits(MUSIC_CREDITS);
+
+let musicFrame = null, musicCount = MUSIC_CREDITS.length;
+let musicOrder = [];
+function musicShuffle() {
+  musicOrder = [...Array(musicCount).keys()];
+  for (let i = musicOrder.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [musicOrder[i], musicOrder[j]] = [musicOrder[j], musicOrder[i]]; }
+}
+function musicNext() {
+  if (!musicOrder.length) musicShuffle();
+  musicSend("skip", musicOrder.shift());
+}
+// Plays when it should and the player still sits paused.
+function musicCheck() { musicSend("isPaused"); }
+function musicOn() { try { return localStorage.getItem("music") !== "off"; } catch { return true; } }
+function musicSend(method, value) { musicFrame?.contentWindow?.postMessage(JSON.stringify({ method, value }), MUSIC_ORIGIN); }
+function renderMusicToggle() {
+  const b = $("#music-toggle"), playing = musicOn();
+  b.innerHTML = playing ? "&#xE767;" : "&#xE74F;";
+  b.classList.toggle("off", !playing);
+  b.title = playing ? "Mute music" : "Play music";
+}
+function updateMusic() {
+  renderMusicToggle();
+  const want = musicOn() && !gameRunning;
+  if (want && !musicFrame) {
+    musicFrame = document.createElement("iframe");
+    musicFrame.className = "music";
+    musicFrame.allow = "autoplay";
+    musicFrame.setAttribute("sandbox", "allow-scripts allow-same-origin");
+    musicFrame.setAttribute("aria-hidden", "true");
+    musicFrame.tabIndex = -1;
+    // The player starts the first shuffled song itself; a play message sent the moment it's ready
+    // can come too early and be ignored.
+    musicShuffle();
+    musicFrame.src = `${MUSIC_ORIGIN}/player/?url=${encodeURIComponent(MUSIC_PLAYLIST)}&auto_play=true` +
+      `&start_track=${musicOrder.shift()}&visual=false&show_artwork=false`;
+    document.body.appendChild(musicFrame);
+  } else if (musicFrame) {
+    musicSend(want ? "play" : "pause");
+  }
+}
+window.addEventListener("message", e => {
+  if (e.origin !== MUSIC_ORIGIN || !musicFrame || e.source !== musicFrame.contentWindow) return;
+  let m; try { m = JSON.parse(e.data); } catch { return; }
+  switch (m.method) {
+    case "ready":
+      ["finish", "error", "play"].forEach(ev => musicSend("addEventListener", ev));
+      musicSend("getSounds");
+      musicSend("setVolume", MUSIC_VOLUME);
+      if (!musicOn() || gameRunning) musicSend("pause");
+      [1500, 4000, 8000].forEach(ms => setTimeout(musicCheck, ms));
+      break;
+    case "isPaused": if (m.value === true && musicOn() && !gameRunning) musicSend("play"); break;
+    case "play": musicSend("setVolume", MUSIC_VOLUME); break;
+    case "getSounds":
+      if (!Array.isArray(m.value) || !m.value.length) break;
+      musicCount = m.value.length;
+      // Songs added to the playlist since the list above was written are credited from the player.
+      renderCredits(MUSIC_CREDITS.concat(m.value.slice(MUSIC_CREDITS.length)
+        .filter(s => s.user && s.title).map(s => [s.user.username, s.title])));
+      break;
+    // Shuffled: every song once in a random order, then a new order. A song that won't play is skipped.
+    case "finish": case "error": musicNext(); break;
+  }
+});
+$("#music-toggle").onclick = () => {
+  try { localStorage.setItem("music", musicOn() ? "off" : "on"); } catch { }
+  updateMusic();
+};
+
 // --- start
 async function start() {
+  updateMusic();
   if (!host) await new Promise(resolve => { const s = document.createElement("script"); s.src = "mock.js"; s.onload = resolve; document.head.appendChild(s); });
   online = await api("online.status");
   renderMe();

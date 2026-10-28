@@ -50,6 +50,8 @@ internal sealed class Bridge
     private async void OnMessage(object? sender, CoreWebView2WebMessageReceivedEventArgs e)
     {
         var id = 0;
+        // Only the launcher's own page talks to the launcher (not the music player's frame).
+        if (!e.Source.StartsWith("https://stilwater.app/", StringComparison.OrdinalIgnoreCase)) return;
         try
         {
             using var message = JsonDocument.Parse(e.WebMessageAsJson);
@@ -71,6 +73,12 @@ internal sealed class Bridge
         var game = _game;
         switch (method)
         {
+            case "window.drag": WindowFrame.Drag(_form, Text("edge")); return null;
+            case "window.minimize": _form.WindowState = FormWindowState.Minimized; return null;
+            case "window.maximize":
+                _form.WindowState = _form.WindowState == FormWindowState.Maximized ? FormWindowState.Normal : FormWindowState.Maximized;
+                return null;
+            case "window.close": _form.Close(); return null;
             case "app.state": return State();
             case "app.update": return await Updater.CheckAsync() is { } update ? new { version = update.Version.ToString() } : null;
             case "app.release": return await LatestReleaseAsync();
@@ -129,7 +137,7 @@ internal sealed class Bridge
                 {
                     mods = ModList.Read(Required()).Select(m => new
                     {
-                        name = m.Name, display = DisplayName(m), enabled = m.Enabled, core = m.IsCore,
+                        name = m.Name, display = DisplayName(m), enabled = m.Enabled, core = m.IsCore, yours = m.IsYours,
                         files = m.Files, mb = Math.Round(m.Bytes / 1024.0 / 1024.0, 1),
                     }).ToList(),
                 };
@@ -137,6 +145,50 @@ internal sealed class Bridge
             case "mods.set":
                 ModList.SetEnabled(Required(), Text("name"), args.GetProperty("enabled").GetBoolean());
                 return null;
+            case "mods.addFolder":
+            {
+                using var dialog = new FolderBrowserDialog { Description = "Choose the mod's folder (the one with its game files)", UseDescriptionForTitle = true };
+                if (dialog.ShowDialog(_form) != DialogResult.OK) return null;
+                var install = Required();
+                return await Task.Run(() => ModShare.AddFolder(install, dialog.SelectedPath));
+            }
+            case "mods.addZip":
+            {
+                using var dialog = new OpenFileDialog { Title = "Choose a mod .zip", Filter = "Zip files|*.zip" };
+                if (dialog.ShowDialog(_form) != DialogResult.OK) return null;
+                var install = Required();
+                return await Task.Run(() => ModShare.AddZip(install, dialog.FileName));
+            }
+            case "mods.remove":
+            {
+                var name = Text("name");
+                var install = Required();
+                if (ModList.Read(install).FirstOrDefault(m => m.Name.Equals(name, StringComparison.OrdinalIgnoreCase)) is not { IsYours: true })
+                    throw new InvalidOperationException("Only mods you added can be removed here.");
+                ModList.Remove(install, name);
+                return null;
+            }
+            case "mods.share":
+            {
+                if (!_online.SignedIn) throw new InvalidOperationException("Sign in to share mods.");
+                var (code, skipped) = await ModShare.ShareAsync(Required(), _online.LoginTicket, ModProgress());
+                return new { code, skipped };
+            }
+            case "mods.lookUp":
+            {
+                _share = await ModShare.LookUpAsync(Text("code"));
+                return new
+                {
+                    code = _share.Code, by = _share.By,
+                    mods = _share.Mods.Select(m => new { name = m.Name, files = m.Files.Count, mb = Math.Round(m.Files.Sum(f => f.Size) / 1024.0 / 1024.0, 1) }),
+                };
+            }
+            case "mods.install":
+            {
+                if (_share is null || !_share.Code.Equals(Text("code"), StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidOperationException("Look the code up first.");
+                return await ModShare.InstallAsync(Required(), _share, ModProgress());
+            }
 
             case "settings.list": return SettingsList();
             case "settings.save": SaveSettings(args.GetProperty("values")); return null;
@@ -144,6 +196,11 @@ internal sealed class Bridge
         }
         throw new InvalidOperationException($"Unknown request {method}.");
     }
+
+    // The mod code looked up last, which mods.install installs.
+    private ModShare.Share? _share;
+
+    private Progress<string> ModProgress() => new(text => Emit("modsProgress", text));
 
     private GameInstall Required() => _game ?? throw new InvalidOperationException("Saints Row 2 wasn't found. Install Stilwater with install.bat.");
 
@@ -188,8 +245,9 @@ internal sealed class Bridge
     {
         var game = Required();
         if (GameInstall.IsRunning()) return new { ok = false, message = "Saints Row 2 is already running." };
-        // An account has one session at a time, and the game signs in with the same one.
-        var wasSignedIn = _online.SignedIn;
+        // Stilwater Online keeps the launcher signed in beside the game (the in-game menu uses it for
+        // friends and invites); OpenSpy has one session per account, which the game takes.
+        var wasSignedIn = _online.SignedIn && Online.UsesOpenSpy;
         if (wasSignedIn) _online.SignOut();
         var result = Runtime.Launch(game);
         if (!result.Ok) return new { ok = false, message = result.Message };

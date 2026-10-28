@@ -1,4 +1,5 @@
 #if !JLITE
+#include <cstring>
 #include <cstdint>
 #include <ctime>
 #include "FileLogger.h"
@@ -289,7 +290,10 @@ namespace RPCHandler {
 
 	typedef bool(*isCoopT)();
 	isCoopT isCoop = (isCoopT)0x007F7AD0;
-	// Updates state info for discord.
+	// Updates state info for discord. Story and co-op read as
+	//   "Mission: Bleed Out" / "Activity: Insurance Fraud" / "Free roam" / "Cutscene: ..."
+	//   "Prawn Court · with angel (2 of 2)"
+	// and Discord only gets told when something changed (it rate-limits activity updates).
 	void UpdateDiscordParams() {
 		BYTE CurrentGamemode = *(BYTE*)0x00E8B210; // Parses the current gamemode from EXE
 		BYTE LobbyCheck = *(BYTE*)0x02528C14; // Checks lobby, technically this is another gamemode check but we'll use it for lobby
@@ -299,187 +303,80 @@ namespace RPCHandler {
 		BYTE IsInCutscene = *(BYTE*)0x02527D14; // Checks if user is in a cutscene.
 		BYTE CurDifficulty = *(BYTE*)0x00E986F4; // Current Difficulty
 
-		std::wstring wPartnerName = partnerName; // parse co-op partner name to a wstring
-		std::string f_PartnerName = wstring_to_string(wPartnerName); // THEN to a string
-		const char* COOPPartner = f_PartnerName.c_str(); // now to a const char because discord is a picky bitch
-		char finalStory[256];
-		char finalStoryCOOP[256];
-		char finalMPDesc[256];
-		char finalCOOPDesc[256];
-		char finalSPDesc[256];
-		char CutsceneWMission[256];
-		char smalltxtmission[256];
-
-		// -- Get Current Players District
-		const wchar_t* district_name = (const wchar_t*)UtilsGlobal::ReadPointer(UtilsGlobal::getplayer(true), { 0x18CC,0x44,0 });
-		std::wstring district_test = L"";
-		if (district_name) {
-			district_test += district_name;
-			if (district_test.empty())
-				district_test += L"Stilwater";
-		}
-		// -----
-
-		std::string Difficulty = "";
-		if (CurDifficulty == 0x0) {
-			Difficulty = "Casual";
-		}
-		else if (CurDifficulty == 0x1) {
-			Difficulty = "Normal";
-		}
-		else {
-			Difficulty = "Hardcore";
-		}
-
-		sprintf(finalCOOPDesc, "%s", wchar_to_utf8(district_test).c_str());
-		sprintf(finalSPDesc, "%s", wchar_to_utf8(district_test).c_str());
-		sprintf(CutsceneWMission, "Watching a Cutscene");
-
-		const wchar_t* mission_name = (const wchar_t*)UtilsGlobal::ReadPointer(0x027B3C60, { 0x34,0 });
-		gang* mission_team = (gang*)UtilsGlobal::ReadPointer(0x027B3C60, { 0x40 });
-		auto Current_Activity = Activity_Type();
-		if (Current_Activity == none) {
-			if (mission_team) {
-
-				//wprintf(L"mission team: %i\n", *mission_team);
-				strcpy_s(pres.assets.small_image, gangToString[*mission_team]);
-			}
-			else {
-				strcpy_s(pres.assets.small_image, "");
-			}
-			if (mission_name) {
-	sprintf(smalltxtmission, "%s", wchar_to_utf8(mission_name).c_str());
-				//strcpy_s(pres.assets.small_text, smalltxtmission);
-				sprintf(finalCOOPDesc, "%s - %s", wchar_to_utf8(district_test).c_str(), smalltxtmission);
-				sprintf(finalSPDesc, "%s - %s", wchar_to_utf8(district_test).c_str(), smalltxtmission);
-				if (IsInCutscene == 1)
-				{
-					sprintf(CutsceneWMission, "Watching a Cutscene - %s", smalltxtmission);
-				}
-			}
-	    }
-		else {
-			//wprintf(L"mission name: %i\n", Activity_Type());
-			strcpy_s(pres.assets.small_text, Difficulty.c_str());
-			strcpy_s(pres.assets.small_image, getActivityLowercase(Current_Activity).c_str());
-			sprintf(finalCOOPDesc, "%s - %s", wchar_to_utf8(district_test).c_str(), activitiesToString[Current_Activity]);
-			sprintf(finalSPDesc, "%s - %s", wchar_to_utf8(district_test).c_str(), activitiesToString[Current_Activity]);
-		}
-
-		//BYTE IsInMission = *(BYTE*)0x27B3C60; // parses mission (?)
-	    sprintf(finalStory, "Story");
-		sprintf(finalStoryCOOP, "Story (Co-op)");
-		sprintf(finalMPDesc, "%s (%s)", playerName, *FancyChunkName);
-
 		static DWORD lastTick = 0;
+		const DWORD currentTick = GetTickCount();
+		if (currentTick - lastTick < 1000)
+			return;
+		lastTick = currentTick;
 
-		DWORD currentTick = GetTickCount();
-		if (currentTick - lastTick >= 600) {
-			lastTick = currentTick;
+		const std::string partner = wstring_to_string(partnerName);
+		const bool coop = isCoop() && !partner.empty() && partner != playerName;
+		const char* difficulty = CurDifficulty == 0 ? "Casual" : CurDifficulty == 1 ? "Normal" : "Hardcore";
 
-			// If GOTR, Change name and logo to GOTR
-			if (Game::xtbl_scan_status.gotr_detected == 1) {
-				strcpy_s(pres.assets.large_image, "gotr");
-				strcpy_s(pres.assets.large_text, "Gentlemen of the Row mod in use.");
+		DiscordActivity next = pres;
+		next.party = {};
+		strcpy_s(next.assets.small_image, "");
+		strcpy_s(next.assets.small_text, "");
+		sprintf_s(next.assets.large_text, "Stilwater Â· %s", difficulty);
+		if (Game::xtbl_scan_status.gotr_detected == 1) {
+			strcpy_s(next.assets.large_image, "gotr");
+			strcpy_s(next.assets.large_text, "Gentlemen of the Row");
+		}
+
+		if (LobbyCheck != 0x0 && CurrentGamemode == 0xFF) { // story or co-op
+			const wchar_t* district_name = (const wchar_t*)UtilsGlobal::ReadPointer(UtilsGlobal::getplayer(true), { 0x18CC,0x44,0 });
+			const std::string district = district_name && *district_name ? wchar_to_utf8(district_name) : "Stilwater";
+			const wchar_t* mission_name = (const wchar_t*)UtilsGlobal::ReadPointer(0x027B3C60, { 0x34,0 });
+			gang* mission_team = (gang*)UtilsGlobal::ReadPointer(0x027B3C60, { 0x40 });
+			const std::string mission = mission_name && *mission_name ? wchar_to_utf8(mission_name) : "";
+			const auto activity = Activity_Type();
+
+			if (IsInCutscene == 1)
+				sprintf_s(next.details, mission.empty() ? "Watching a cutscene" : "Cutscene: %s", mission.c_str());
+			else if (activity != none) {
+				sprintf_s(next.details, "Activity: %s", activitiesToString[activity]);
+				strcpy_s(next.assets.small_image, getActivityLowercase(activity).c_str());
+				strcpy_s(next.assets.small_text, activitiesToString[activity]);
 			}
-
-			if (!LobbyCheck == 0x0 && CurrentGamemode == 0xFF) // This should be CO-OP / Singleplayer
-			{
-				if (IsInCutscene == 1)
-				{
-					strcpy_s(pres.details, CutsceneWMission);
+			else if (!mission.empty()) {
+				sprintf_s(next.details, "Mission: %s", mission.c_str());
+				if (mission_team && gangToString.count(*mission_team)) {
+					strcpy_s(next.assets.small_image, gangToString[*mission_team]);
+					strcpy_s(next.assets.small_text, *mission_team == saints ? "3rd Street Saints" : *mission_team == brotherhood ? "The Brotherhood"
+						: *mission_team == ronin ? "Ronin" : *mission_team == samedi ? "Sons of Samedi" : "Ultor");
 				}
-				else
-				{
-					if (f_PartnerName == playerName || f_PartnerName.empty() || !isCoop) {
-						strcpy_s(pres.details, finalSPDesc);
-						strcpy_s(pres.state, finalStory);
-					}
-					else
-					{
-						strcpy_s(pres.details, finalCOOPDesc);
-						strcpy_s(pres.state, finalStoryCOOP);
-					}
-				}
 			}
-			if (CurrentGamemode == 0xD) // Strong Arm
-			{
-				MapDescAPI();
-				if (MatchType == (BYTE)1)
-					strcpy_s(pres.details, "Playing MP in Strong Arm");
+			else
+				strcpy_s(next.details, "Free roam");
 
-				if (MatchType == (BYTE)2)
-					strcpy_s(pres.details, "Playing Ranked MP in Strong Arm");
+			if (coop)
+				sprintf_s(next.state, "%s \xC2\xB7 co-op with %s", district.c_str(), partner.c_str());
+			else
+				sprintf_s(next.state, "%s \xC2\xB7 story", district.c_str());
+			// Discord shows "(1 of 2)" / "(2 of 2)": the co-op slots.
+			sprintf_s(next.party.id, "stilwater-%s", coop ? partner.c_str() : playerName);
+			next.party.size = { coop ? 2 : 1, 2 };
+		}
+		else if (CurrentGamemode == 0xD || CurrentGamemode == 0xB || CurrentGamemode == 0xC) { // multiplayer matches
+			MapDescAPI();
+			const char* mode = CurrentGamemode == 0xD ? "Strong Arm" : CurrentGamemode == 0xB ? "Gangsta Brawl" : "Team Gangsta Brawl";
+			const char* kind = MatchType == 2 ? "Ranked " : MatchType == 3 ? "Party " : "";
+			sprintf_s(next.details, "%s%s", kind, mode);
+			sprintf_s(next.state, "%s", *FancyChunkName);
+		}
+		else if (LobbyCheck == 0x44) { // multiplayer lobby
+			sprintf_s(next.details, "%s", MatchType == 2 ? "Ranked lobby" : MatchType == 3 ? "Party lobby" : "Multiplayer lobby");
+			strcpy_s(next.state, "Waiting for players");
+		}
+		else if (LobbyCheck == 0x0) { // menus
+			strcpy_s(next.details, "Main menu");
+			strcpy_s(next.state, "");
+		}
 
-				if (MatchType == (BYTE)3)
-					strcpy_s(pres.details, "Playing Party MP in Strong Arm");
-
-				strcpy_s(pres.state, finalMPDesc);
-			}
-			if (CurrentGamemode == 0xB) // Gangsta Brawl
-			{
-				MapDescAPI();
-				if (MatchType == (BYTE)1)
-					strcpy_s(pres.details, "Playing MP in Gangsta Brawl");
-
-				if (MatchType == (BYTE)2)
-					strcpy_s(pres.details, "Playing Ranked MP in Gangsta Brawl");
-
-				if (MatchType == (BYTE)3)
-					strcpy_s(pres.details, "Playing Party MP in Gangsta Brawl");
-
-				strcpy_s(pres.state, finalMPDesc);
-			}
-			if (CurrentGamemode == 0xC) // Team Gangsta Brawl
-			{
-				MapDescAPI();
-				/*if (*FancyChunkName == "Prison Island (PTP Blitz)") {
-					if (MatchType == (BYTE)1)
-						strcpy_s(pres.details, "Playing MP in PTP Blitz");
-
-					if (MatchType == (BYTE)2)
-						strcpy_s(pres.details, "Playing Ranked MP in PTP Blitz");
-
-					if (MatchType == (BYTE)3)
-						strcpy_s(pres.details, "Playing Party MP in PTP Blitz");
-				}
-				else {*/
-					if (MatchType == (BYTE)1)
-						strcpy_s(pres.details, "Playing MP in Team Gangsta Brawl");
-
-					if (MatchType == (BYTE)2)
-						strcpy_s(pres.details, "Playing Ranked MP in Team Gangsta Brawl");
-
-					if (MatchType == (BYTE)3)
-						strcpy_s(pres.details, "Playing Party MP in Team Gangsta Brawl");
-				//}
-
-				strcpy_s(pres.state, finalMPDesc);
-			}
-			if (LobbyCheck == 0x44) // Game Lobby
-			{
-				// Player MP Lobby shows as default for everyone, Ranked and Party seem to only show in rich presence if host
-				// so we'll keep the conditions because we need it for friendly fire shit anyway.
-				if (MatchType == (BYTE)1) // Player Lobby
-					strcpy_s(pres.details, "Waiting in MP Lobby...");
-
-				if (MatchType == (BYTE)2) // Ranked Lobby
-				{
-					strcpy_s(pres.details, "Waiting in Ranked MP Lobby...");
-				}
-
-				if (MatchType == (BYTE)3) // Party Lobby
-					strcpy_s(pres.details, "Waiting in Party MP Lobby...");
-			}
-			if (LobbyCheck == 0x0) // Usually Menus Check
-			{
-				strcpy_s(pres.details, "In the Main-Menu...");
-				strcpy_s(pres.state, "");
-			}
-
+		if (std::memcmp(&next, &pres, sizeof(pres)) != 0) {
+			pres = next;
 			app.activities->update_activity(app.activities, &pres, 0, 0);
 		}
-
 	}
 	void Init() {
 	Enabled = GameConfig::GetValue("Misc", "RichPresence", 1, "Discord Rich Presence");

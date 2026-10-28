@@ -125,7 +125,7 @@ git push -u origin $branch; Run "git push"
 
 Step "Publishing the release"
 $body = if ($Notes) { $Notes } else { "Stilwater v$Version." }
-$body += "`n`nInstall: extract the zip and run install.bat. It needs Saints Row 2 from Steam and sets up everything else (Juiced Patch, DirectX, .NET, DXVK). Already installed? Press Update in the launcher."
+$body += "`n`nInstall: extract the zip and run install.bat. It needs Saints Row 2 (from Steam or any copy of the game folder) and sets up everything else (Juiced Patch, DirectX, .NET, DXVK). Already installed? Press Update in the launcher."
 gh release create "v$Version" $zip --repo $Repository --title "Stilwater v$Version" --notes $body --target $branch
 Run "gh release create"
 Write-Host ""

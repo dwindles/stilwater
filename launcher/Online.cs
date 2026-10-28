@@ -51,6 +51,9 @@ internal sealed class Online : IDisposable
 
     public int ProfileId { get; private set; }
     public string Nick { get; private set; } = "";
+    /// <summary>The login ticket (\lt\) from signing in: what shows the server's web side (shared
+    /// mods) who this is.</summary>
+    public string LoginTicket { get; private set; } = "";
     public bool SignedIn => _stream is not null && _sessionKey != 0;
     public IReadOnlyCollection<Friend> Friends => _friends.Values;
     public IReadOnlyCollection<Request> Requests => _requests.Values;
@@ -127,7 +130,9 @@ internal sealed class Online : IDisposable
         var passwordHash = Md5(login.Password);
         var response = Md5(passwordHash + new string(' ', 48) + user + clientChallenge + serverChallenge + passwordHash);
         await SendAsync($@"\login\\challenge\{clientChallenge}\user\{user}\partnerid\0\response\{response}\firewall\1\port\0" +
-                        $@"\productid\{ProductId}\gamename\{GameName}\namespaceid\{NamespaceId}\sdkrevision\11\quiet\0\id\1\final\");
+                        $@"\productid\{ProductId}\gamename\{GameName}\namespaceid\{NamespaceId}\sdkrevision\11\quiet\0" +
+                        // Stilwater Online keeps the launcher signed in beside the game when it knows which is which.
+                        (UsesOpenSpy ? "" : @"\swlauncher\1") + @"\id\1\final\");
 
         var reply = Parse(await _reader.ReadAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(15)));
         if (reply.ContainsKey("error"))
@@ -142,6 +147,7 @@ internal sealed class Online : IDisposable
         }
         _sessionKey = int.Parse(reply["sesskey"]);
         ProfileId = int.Parse(reply["profileid"]);
+        LoginTicket = reply.GetValueOrDefault("lt", "");
         Nick = login.Nick;
         _stop = new CancellationTokenSource();
         _ = ReadLoopAsync(_stop.Token);
@@ -157,6 +163,14 @@ internal sealed class Online : IDisposable
     }
 
     public Profile? ProfileOf(int profileId) => _profiles.GetValueOrDefault(profileId);
+
+    /// <summary>Accepts a friend's invite: for the next few minutes the game's co-op matchmaking
+    /// finds only that friend's game (server/presence.py cmd_swjoin), so it joins them.</summary>
+    public async Task JoinAsync(Friend friend)
+    {
+        if (UsesOpenSpy) throw new InvalidOperationException("Joining from an invite is a Stilwater Online feature.");
+        await RequestAsync($@"\swjoin\sesskey\{_sessionKey}\profileid\{friend.ProfileId}");
+    }
 
     /// <summary>Changes your picture (an empty array removes it) and/or bio; null leaves either as it is.</summary>
     public async Task SetProfileAsync(byte[]? picture, string? bio)
@@ -310,6 +324,7 @@ internal sealed class Online : IDisposable
         _reader = null;
         _client = null;
         _sessionKey = 0;
+        LoginTicket = "";
     }
 
     private async Task ReadLoopAsync(CancellationToken stop)
@@ -352,7 +367,7 @@ internal sealed class Online : IDisposable
     {
         // A reply to one of our requests, or an error about it.
         if (m.TryGetValue("id", out var replyTo) && _waiting.TryGetValue(replyTo, out var waiter) &&
-            (m.ContainsKey("swprofile") || m.ContainsKey("error")))
+            (m.ContainsKey("swprofile") || m.ContainsKey("swjoined") || m.ContainsKey("error")))
         {
             if (m.ContainsKey("error")) waiter.TrySetException(new InvalidOperationException(m.GetValueOrDefault("errmsg", $"{ServiceName} refused.")));
             else waiter.TrySetResult(m);

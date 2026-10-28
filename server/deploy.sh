@@ -11,12 +11,15 @@ target="$1"; shift
 here="$(cd "$(dirname "$0")" && pwd)"
 
 ssh "$@" "$target" 'mkdir -p /opt/stilwater-online'
-scp -q "${@/#-p/-P}" "$here"/{main,gamespy,accounts,presence,master,natneg,notify,webservices}.py \
-    "$here/stilwater-online.service" "$here/nginx-stilwater-online.conf" "$target:/opt/stilwater-online/"
+scp -q "${@/#-p/-P}" "$here"/{main,gamespy,accounts,presence,master,natneg,notify,webservices,mods}.py \
+    "$here/stilwater-online.service" "$here/nginx-stilwater-online.conf" "$here/nginx-holdonquietly-mods.conf" \
+    "$target:/opt/stilwater-online/"
 ssh "$@" "$target" '
     set -e
     id stilwater >/dev/null 2>&1 || useradd --system --no-create-home --shell /usr/sbin/nologin stilwater
     install -d -o stilwater -g stilwater -m 750 /var/lib/stilwater-online
+    # Shared mods files, which nginx serves (server/mods.py).
+    install -d -o stilwater -g stilwater -m 755 /var/lib/stilwater-mods
     install -d -m 755 /etc/stilwater-online
     for key in authservice peerkey; do
         [ -f /etc/stilwater-online/$key.pem ] || openssl genrsa -traditional -out /etc/stilwater-online/$key.pem 1024 2>/dev/null
@@ -28,7 +31,19 @@ ssh "$@" "$target" '
     if [ -d /etc/nginx/sites-enabled ]; then
         mv /opt/stilwater-online/nginx-stilwater-online.conf /etc/nginx/sites-available/stilwater-online
         ln -sf /etc/nginx/sites-available/stilwater-online /etc/nginx/sites-enabled/stilwater-online
-        nginx -t -q && systemctl reload nginx
+        # Shared mods live on holdonquietly.com (HTTPS) when this server hosts it.
+        mv /opt/stilwater-online/nginx-holdonquietly-mods.conf /etc/nginx/snippets/stilwater-mods.conf
+        site=/etc/nginx/conf.d/holdonquietly.conf
+        if [ -f $site ] && ! grep -q "snippets/stilwater-mods.conf" $site; then
+            cp $site /root/holdonquietly.conf.before-stilwater-mods
+            sed -i "0,/server_name holdonquietly.com;/s//&\n    include snippets\/stilwater-mods.conf;/" $site
+        fi
+        if ! nginx -t -q; then
+            [ -f /root/holdonquietly.conf.before-stilwater-mods ] && cp /root/holdonquietly.conf.before-stilwater-mods $site
+            echo "nginx rejected the change; put back $site"
+            exit 1
+        fi
+        systemctl reload nginx
     else
         echo "nginx not found: the web services (sign-in certificates) need port 80 passed to 127.0.0.1:29980"
     fi

@@ -18,15 +18,16 @@ from presence import Presence
 from webservices import WebServices
 
 
-async def run(bind: str, data: str, keys: str, web_bind: str):
+async def run(bind: str, data: str, keys: str, web_bind: str, mod_files: str):
     os.makedirs(data, exist_ok=True)
     accounts = Accounts(os.path.join(data, "accounts.db"))
     presence = Presence(accounts)
+    presence.master = Master(presence.nicks_at)
     servers = [
         await asyncio.start_server(presence.serve_client, bind, 29900),
         await asyncio.start_server(presence.serve_search, bind, 29901),
-        await Master(presence.nicks_at).start(bind),
-        await WebServices(presence, accounts, data, keys).start(web_bind),
+        await presence.master.start(bind),
+        await WebServices(presence, accounts, data, keys, mod_files).start(web_bind),
     ]
     await NatNeg(presence.nicks_at).start(bind)
     logging.info("Stilwater Online listening on %s", bind)
@@ -39,11 +40,12 @@ def main():
     parser.add_argument("--data", default=os.path.join(os.path.dirname(os.path.abspath(__file__)), "data"))
     parser.add_argument("--keys", default="/etc/stilwater-online", help="folder with authservice.pem and peerkey.pem")
     parser.add_argument("--web-bind", default="127.0.0.1", help="where the HTTP services listen (nginx forwards to them)")
+    parser.add_argument("--mod-files", default="", help="where shared mods' files go (nginx serves them); default <data>/mod-files")
     parser.add_argument("--verbose", action="store_true")
     args = parser.parse_args()
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO,
                         format="%(asctime)s %(name)s %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
-    asyncio.run(run(args.bind, args.data, args.keys, args.web_bind))
+    asyncio.run(run(args.bind, args.data, args.keys, args.web_bind, args.mod_files))
 
 
 if __name__ == "__main__":

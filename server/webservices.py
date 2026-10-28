@@ -29,6 +29,7 @@ import xml.etree.ElementTree as ET
 from xml.sax.saxutils import escape
 
 import gamespy as gs
+import mods
 import notify
 from accounts import Accounts
 
@@ -154,7 +155,7 @@ REASONS = {200: "OK", 400: "Bad Request", 404: "Not Found", 405: "Method Not All
 
 
 class WebServices:
-    def __init__(self, presence, accounts: Accounts, data: str, keys: str):
+    def __init__(self, presence, accounts: Accounts, data: str, keys: str, mod_files: str = ""):
         self.presence = presence
         self.accounts = accounts
         self.auth_key = self.peer_key = None
@@ -164,20 +165,32 @@ class WebServices:
         except (OSError, ValueError, IndexError) as e:
             log.warning("AuthService keys missing in %s (%s); in-game sign-in will fail", keys, e)
         self.sake = Sake(os.path.join(data, "sake.db"))
+        self.mods = mods.ModStore(data, mod_files or os.path.join(data, "mod-files"),
+                                  lambda owner: (accounts.profile(owner) or {"nick": f"#{owner}"})["nick"])
 
     async def start(self, bind: str):
+        asyncio.create_task(self.mods.clean_up_daily())
         return await asyncio.start_server(self.serve, bind, PORT)
 
     async def serve(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
         try:
-            request = await asyncio.wait_for(self._read(reader), 30)
-            if request is None:
-                return
-            try:
-                response = self.route(request)
-            except Exception:
-                log.exception("%s %s failed", request.method, request.path)
-                response = Response(500)
+            head = await asyncio.wait_for(self._read_head(reader), 30)
+            method, target, headers = head
+            url = urllib.parse.urlsplit(target)
+            length = int(headers.get("content-length", "0") or 0)
+            if url.path.startswith(mods.PREFIX):
+                # Shared mods: a file upload is streamed to disk rather than read into memory.
+                response = await self.mods_route(method, url.path, headers, length, reader)
+            else:
+                if length > MAX_BODY:
+                    return
+                body = await asyncio.wait_for(reader.readexactly(length), 30) if length else b""
+                request = Request(method, url.path, urllib.parse.parse_qs(url.query), headers, body)
+                try:
+                    response = self.route(request)
+                except Exception:
+                    log.exception("%s %s failed", request.method, request.path)
+                    response = Response(500)
             head = [f"HTTP/1.1 {response.status} {REASONS.get(response.status, 'OK')}",
                     f"Content-Type: {response.content_type}", f"Content-Length: {len(response.body)}", "Connection: close"]
             head += [f"{k}: {v}" for k, v in response.headers]
@@ -188,7 +201,8 @@ class WebServices:
         finally:
             writer.close()
 
-    async def _read(self, reader: asyncio.StreamReader):
+    @staticmethod
+    async def _read_head(reader: asyncio.StreamReader):
         head = (await reader.readuntil(b"\r\n\r\n")).decode("latin-1")
         lines = head.split("\r\n")
         method, target, _ = lines[0].split(" ", 2)
@@ -197,12 +211,47 @@ class WebServices:
             if ":" in line:
                 key, value = line.split(":", 1)
                 headers[key.strip().lower()] = value.strip()
-        length = int(headers.get("content-length", "0") or 0)
-        if length > MAX_BODY:
-            return None
-        body = await reader.readexactly(length) if length else b""
-        url = urllib.parse.urlsplit(target)
-        return Request(method, url.path, urllib.parse.parse_qs(url.query), headers, body)
+        return method, target, headers
+
+    # --- shared mods (mods.py)
+
+    async def mods_route(self, method: str, path: str, headers: dict, length: int, reader) -> Response:
+        def reply(value, status=200):
+            return Response(status, json.dumps(value).encode(), "application/json; charset=utf-8")
+
+        async def small_body() -> bytes:
+            if length > MAX_BODY:
+                raise mods.ModError(413, "That request is too big.")
+            return await asyncio.wait_for(reader.readexactly(length), 30) if length else b""
+
+        def signed_in() -> int:
+            owner = self.profile_for_ticket(headers.get("x-stilwater-ticket", ""))
+            if not owner:
+                raise mods.ModError(401, "Sign in again to share mods.")
+            return owner
+
+        rest = path[len(mods.PREFIX):]
+        try:
+            if method == "POST" and rest == "missing":
+                signed_in()
+                return reply(self.mods.missing(await small_body()))
+            if method == "PUT" and rest.startswith("blob/"):
+                owner = signed_in()
+                return reply(await self.mods.receive(reader, rest[5:], length, owner))
+            if method == "POST" and rest == "share":
+                owner = signed_in()
+                return reply(self.mods.share(await small_body(), owner))
+            if method == "GET" and rest.startswith("share/"):
+                return reply(self.mods.get_share(urllib.parse.unquote(rest[6:])))
+            if method == "GET" and rest.startswith("file/") and mods.HASH.match(rest[5:]) and self.mods.has(rest[5:]):
+                # nginx serves these itself; this is for running without it.
+                with open(self.mods.path(rest[5:]), "rb") as f:
+                    return Response(200, f.read(), "application/octet-stream")
+            return reply({"error": "Not found."}, 404)
+        except mods.ModError as e:
+            return reply({"error": e.text}, e.status)
+        except (ValueError, AttributeError, TypeError):
+            return reply({"error": "That request couldn't be read."}, 400)
 
     def route(self, request: Request) -> Response:
         path = request.path.lower()
