@@ -5,6 +5,8 @@ Messages are \\key\\value pairs ending in \\final\\. Buddy messages (\\bm\\) car
 (the launcher's invites ride on these), 2 friend request, 4 request accepted, 6 removed,
 100 status, 101 game invite."""
 import asyncio
+import base64
+import binascii
 import logging
 import secrets
 import socket
@@ -17,7 +19,7 @@ from accounts import Accounts, AccountError
 
 log = logging.getLogger("presence")
 
-MAX_MESSAGE = 16 * 1024
+MAX_MESSAGE = 128 * 1024      # a profile picture is up to 64 KB, sent as base64
 KEEPALIVE_SECONDS = 60
 IDLE_SECONDS = 300
 
@@ -77,6 +79,7 @@ class Session:
         self.location = ""
         self.port = 0
         self.closed = False
+        self.launcher = False       # the Stilwater launcher, not the game: it takes the sw* extensions
 
     def send(self, *pairs):
         if self.closed:
@@ -150,7 +153,11 @@ class Presence:
             session.status, session.status_text, session.location = 0, "Offline", ""
             self._tell_friends(session)
             log.info("%s signed out", session.nick)
-            notify.post(f"{session.nick} went offline")
+            notify.signed_out(session.nick)
+
+    def nicks_at(self, ip: str) -> list[str]:
+        """Who is signed in from this address (to name hosts and players in the Discord feed)."""
+        return [s.nick for s in self.online.values() if s.address[0] == ip]
 
     def _tell_friends(self, session: Session):
         for friend in self.accounts.friends(session.profile_id):
@@ -208,7 +215,7 @@ class Presence:
         session.send(("lc", 2), ("sesskey", session.session_key), ("proof", proof), ("userid", profile["user_id"]),
                      ("profileid", profile["id"]), ("uniquenick", profile["nick"]), ("lt", ticket), ("id", request_id))
         log.info("%s signed in from %s", session.nick, session.address[0])
-        notify.post(f"{session.nick} signed in")
+        notify.signed_in(session.nick)
 
         friends = self.accounts.friends(session.profile_id)
         session.send(("bdy", len(friends)), ("list", ",".join(map(str, friends))))
@@ -244,7 +251,7 @@ class Presence:
         nick = fields.get("uniquenick") or fields.get("nick", "")
         profile = self.accounts.create(fields.get("email", ""), nick, gs.md5(password))
         log.info("new account %s", profile["nick"])
-        notify.post(f"New account: **{profile['nick']}**")
+        notify.post(f"🆕 New account: **{profile['nick']}**", profile["nick"])
         return profile
 
     def cmd_logout(self, session: Session, fields):
@@ -289,7 +296,7 @@ class Presence:
             return self._accept(session, target)
         reason = fields.get("reason", "")[:200].replace("|", "")
         self.accounts.request(session.profile_id, target, reason)
-        notify.post(f"{session.nick} sent a friend request to {self._nick(target)}")
+        notify.post(f"👋 {session.nick} sent {self._nick(target)} a friend request", session.nick, self._nick(target))
         other = self.online.get(target)
         if other:
             other.send(("bm", BM_REQUEST), ("f", session.profile_id),
@@ -309,7 +316,7 @@ class Presence:
 
     def _accept(self, session: Session, other_id: int):
         self.accounts.befriend(session.profile_id, other_id)
-        notify.post(f"**{session.nick}** and **{self._nick(other_id)}** are now friends")
+        notify.post(f"🤝 **{session.nick}** and **{self._nick(other_id)}** are now friends", session.nick, self._nick(other_id))
         other = self.online.get(other_id)
         if other:
             other.send(("bm", BM_AUTH), ("f", session.profile_id),
@@ -325,7 +332,7 @@ class Presence:
         except ValueError:
             return
         self.accounts.unfriend(session.profile_id, other_id)
-        notify.post(f"{session.nick} removed {self._nick(other_id)} as a friend")
+        notify.post(f"{session.nick} removed {self._nick(other_id)} as a friend", session.nick, self._nick(other_id))
         other = self.online.get(other_id)
         if other:
             other.send(("bm", BM_REVOKE), ("f", session.profile_id), ("msg", "I have revoked you from my list."))
@@ -340,7 +347,7 @@ class Presence:
             return
         body = fields.get("msg", "")[:1024]
         if kind == BM_MESSAGE and body.startswith("STILWATER_INVITE|"):
-            notify.post(f"{session.nick} invited {self._nick(target)} to co-op")
+            notify.post(f"✉️ {session.nick} invited {self._nick(target)} to co-op", session.nick, self._nick(target))
         other = self.online.get(target)
         if other:
             other.send(("bm", kind), ("f", session.profile_id), ("msg", body))
@@ -354,7 +361,7 @@ class Presence:
             return
         other = self.online.get(target)
         if other and self.accounts.are_friends(session.profile_id, target):
-            notify.post(f"{session.nick} invited {self._nick(target)} to their game")
+            notify.post(f"✉️ {session.nick} invited {self._nick(target)} to co-op", session.nick, self._nick(target))
             other.send(("bm", BM_INVITE), ("f", session.profile_id),
                        ("msg", f"|p|{fields.get('productid', gs.PRODUCT_ID)}|l|{fields.get('location', '')}"))
 
@@ -366,6 +373,47 @@ class Presence:
 
     def cmd_inviteto(self, session: Session, fields):
         pass
+
+    # --- Stilwater extensions, only ever sent by the launcher. Replies and pushes use commands the
+    # game doesn't know, so they only go to sessions that said \swhello\.
+
+    def cmd_swhello(self, session: Session, fields):
+        session.launcher = True
+
+    def cmd_swsetprofile(self, session: Session, fields):
+        """\\swsetprofile\\ with bio and/or avatar (base64 JPEG or PNG; empty removes it)."""
+        request_id = fields.get("id", "1")
+        try:
+            avatar = base64.b64decode(fields["avatar"], validate=True) if "avatar" in fields else None
+            digest = self.accounts.set_profile(session.profile_id, fields.get("bio"), avatar)
+        except (binascii.Error, ValueError):
+            return session.error(GP_PARSE, "That picture couldn't be read.", False, request_id)
+        except AccountError as e:
+            return session.error(GP_PARSE, e.text, False, request_id)
+        session.send(("swprofile", ""), ("profileid", session.profile_id), ("hash", digest), ("id", request_id))
+        if avatar is not None:
+            log.info("%s changed their profile picture", session.nick)
+            notify.post(f"🖼️ {session.nick} updated their profile picture", session.nick)
+        for friend in self.accounts.friends(session.profile_id):
+            other = self.online.get(friend)
+            if other and other.launcher:
+                other.send(("swprofilechanged", ""), ("profileid", session.profile_id), ("hash", digest))
+
+    def cmd_swgetprofile(self, session: Session, fields):
+        """\\swgetprofile\\profileid\\<id>\\have\\<hash>: the picture comes only when it differs from have."""
+        request_id = fields.get("id", "1")
+        try:
+            profile_id = int(fields.get("profileid", "0"))
+        except ValueError:
+            profile_id = 0
+        profile = self.accounts.public_profile(profile_id)
+        if profile is None:
+            return session.error(GP_GETPROFILE_BAD_PROFILE, "There's no such player.", False, request_id)
+        pairs = [("swprofile", ""), ("profileid", profile_id), ("nick", profile["nick"]), ("bio", profile["bio"]),
+                 ("since", profile["created"]), ("hash", profile["avatar_hash"])]
+        if profile["avatar_hash"] and profile["avatar_hash"] != fields.get("have", ""):
+            pairs.append(("avatar", base64.b64encode(profile["avatar"]).decode()))
+        session.send(*pairs, ("id", request_id))
 
     # --- gpsp: one request per connection, answered and closed
 

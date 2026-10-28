@@ -1,8 +1,9 @@
 Stilwater - a Saints Row 2 client by holdonquietly.com
 
 Install
-  You need Saints Row 2 from Steam, installed. That's all.
-  Extract this whole zip anywhere, then double-click install.bat. It sets up everything else:
+  You need Saints Row 2 installed (Steam, or any copy of the game folder). That's all.
+  Extract this whole zip anywhere, then double-click install.bat. It finds the game (next to the
+  zip, in Steam, or it asks you to pick the folder with SR2_pc.exe) and sets up everything else:
     - Juiced Patch v9.2.0 (downloaded from its GitHub release), which Stilwater builds on
     - the game exe made mod-ready, and allowed to use 4 GB of memory
     - DirectX 9 for the game, and the .NET 8 Desktop Runtime from Microsoft, if they're missing
@@ -11,7 +12,10 @@ Install
     - Steam's Play button opening Stilwater (it asks before closing Steam for a moment)
     - a Stilwater shortcut on your desktop
   Windows may ask for permission once (when the game is in Program Files, or DirectX is needed).
-  Game somewhere else? install.bat -Game "D:\Games\Saints Row 2"
+
+Play
+  Open Stilwater from the shortcut on your desktop, or <Saints Row 2>\Stilwater\StilwaterLauncher.exe.
+  Press Play there (Steam's Play button opens it too, once install.bat has set that up).
 
 Update
   The launcher shows an Update button when a new version is out. Close the game first.

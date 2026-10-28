@@ -17,8 +17,8 @@ T3K's freed sounds). Their waves in Weapons.xwb (audio.vpp_pc; loose) become GTA
 (ptl_px4 in the "menchos free sound pack 2" WEAPONS_PLAYER.rpf, NG-encrypted, exported to .wav
 with D:	ools\sr2-re\gtaaudio, which takes the keys from GTA5.exe): a loop of shots at the
 switch's fire rate, each one of its four crack variations over its shot body, and its reverb
-tail for the release. A cue's waves come from the .xsb: cue n is the n-th Weapons entry in
-foley.xtbl (the bank holds no names).
+tail for the release. A cue's waves come from Weapons.xsb, and its number from the game's
+audio_boot.idx_map (tools/sr2/xsb.py; the banks hold no names).
 
 The weapon's full-auto stats and ammo (weapons.xtbl, ammo.xtbl) and its name are in mods/shared,
 because only one copy of each table loads.
@@ -39,6 +39,7 @@ sys.path.insert(0, str(ROOT / "tools" / "mesh"))
 import unwrap  # noqa: E402
 import vpp  # noqa: E402
 import weaponport  # noqa: E402
+import xsb  # noqa: E402
 import xwb  # noqa: E402
 
 MODEL = "p_glock21c"
@@ -66,11 +67,9 @@ RATE = 44100
 SHOT_INTERVAL = 0.050                   # mods/shared's Refire_Delay for the glock
 LOOP_SHOTS = 16
 TAIL_FROM = 0.07                        # the release starts after the shot's own crack
-# Weapons.xwb waves of the MAC-10's cues.
-WAVE_FIRE_PLAYER = 148                  # MAC10_FIRE_PLAYER (cue 25), looped while firing
-WAVE_FIRE_NPC = 183                     # MAC10_FIRE_NPC (cue 46), looped
-WAVE_RELEASE_PLAYER = 184               # MAC10_RELEASE_PLAYER (cue 48)
-WAVES_RELEASE_NPC = (179, 180, 181, 182)  # MAC10_RELEASE_NPC's variations (cue 47)
+# The MAC-10's cues the Glock takes over: the fire cues loop their wave while the trigger is held.
+FIRE_CUES = ("MAC10_FIRE_PLAYER", "MAC10_FIRE_NPC")
+RELEASE_CUES = ("MAC10_RELEASE_PLAYER", "MAC10_RELEASE_NPC")
 
 
 def place(vanilla, gta_positions):
@@ -121,9 +120,12 @@ def sounds(game, folder):
     tail = load_wav(folder / f"{TAIL}.wav")[int(TAIL_FROM * RATE):]
     tail[:int(0.005 * RATE)] *= np.linspace(0, 1, int(0.005 * RATE))
     loop, tail = to_pcm(loop, 0.9), to_pcm(tail, 0.6)
-    waves = {WAVE_FIRE_PLAYER: (loop, RATE, True), WAVE_FIRE_NPC: (loop, RATE, True),
-             WAVE_RELEASE_PLAYER: (tail, RATE, False), **{w: (tail, RATE, False) for w in WAVES_RELEASE_NPC}}
-    print(f"   sounds: {LOOP_SHOTS}-shot loop {len(loop) / RATE:.2f} s, tail {len(tail) / RATE:.2f} s")
+    waves = {}
+    for cue in FIRE_CUES:
+        waves.update({w: (loop, RATE, True) for w in xsb.waves_of(game, "Weapons", cue)})
+    for cue in RELEASE_CUES:
+        waves.update({w: (tail, RATE, False) for w in xsb.waves_of(game, "Weapons", cue)})
+    print(f"   sounds: {LOOP_SHOTS}-shot loop {len(loop) / RATE:.2f} s, tail {len(tail) / RATE:.2f} s, Weapons.xwb waves {sorted(waves)}")
     return xwb.replace(vpp.Packfile(game / "audio.vpp_pc").read("Weapons.xwb"), waves)
 
 

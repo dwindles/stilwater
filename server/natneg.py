@@ -55,9 +55,10 @@ class Session:
 
 
 class NatNeg(asyncio.DatagramProtocol):
-    def __init__(self):
+    def __init__(self, nicks_at=lambda ip: []):
         self.sessions: dict[bytes, Session] = {}
         self.transport = None
+        self.nicks_at = nicks_at        # who is signed in from an address, to name players in the feed
 
     async def start(self, bind: str):
         loop = asyncio.get_running_loop()
@@ -111,7 +112,10 @@ class NatNeg(asyncio.DatagramProtocol):
         a, b = session.clients[0], session.clients[1]
         if attempt == 0:
             log.info("natneg %s: %s:%d <-> %s:%d", session.cookie.hex(), *a.public(), *b.public())
-            notify.post("Two players are connecting through NAT negotiation")
+            names = [" & ".join(self.nicks_at(c.public()[0])) or "someone" for c in (a, b)]
+            if names[0] != names[1]:        # the same names: players on one network, nothing to say
+                notify.post(f"🔗 {names[0]} and {names[1]} connected for co-op", *names,
+                            *self.nicks_at(a.public()[0]), *self.nicks_at(b.public()[0]))
         for me, other in ((a, b), (b, a)):
             if me.acked:
                 continue

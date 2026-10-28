@@ -31,9 +31,9 @@ internal static class Program
 
     private static int PlayHeadless()
     {
-        var game = GameInstall.FindSteamInstall();
+        var game = GameInstall.Find();
         var result = game is null
-            ? new Runtime.LaunchResult(false, 0, "Saints Row 2 was not found in any Steam library.")
+            ? new Runtime.LaunchResult(false, 0, "Saints Row 2 was not found. Install Stilwater with install.bat, which puts the launcher in the game's Stilwater folder.")
             : Runtime.Launch(game);
 
         var log = Path.Combine(Runtime.Folder, "logs", "launcher.log");

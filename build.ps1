@@ -18,7 +18,7 @@ if ($LASTEXITCODE) { throw "CMake configure failed" }
 cmake --build "$root\runtime\build" --config $Configuration
 if ($LASTEXITCODE) { throw "Runtime build failed" }
 
-# The launcher publishes as one self-contained exe; drop files an older framework-dependent build left.
+# Drop the launcher files an earlier build left, so dist holds only this one's.
 Remove-Item "$dist\StilwaterLauncher.*" -ErrorAction SilentlyContinue
 $versionArgs = @()
 if ($Version) { $versionArgs += "-p:Version=$Version" }

@@ -63,7 +63,7 @@ Server browser (SB v2), from the game's parser:
 
 ## Audio (XACT banks)
 
-`audio.vpp_pc` holds XACT 3 banks (`.xsb` sound banks, `.xwb` wave banks, version 44) without cue names. `foley.xtbl` names each sound and its bank (`<AudioBanks>`); a sound's cue index is its position among that bank's entries in `foley.xtbl` (Weapons: 146 entries, 76 simple + 70 complex cues). For example `MAC10_FIRE_PLAYER` is Weapons cue 25, a looping play of wave 148, and `MAC10_DRY` (cue 26) is wave 149. Automatic weapons loop their fire cue while the trigger is held and play the release cue after it. `tools/sr2/xwb.py` replaces waves with PCM; a loose `Weapons.xwb` is used by mods/glock-switch (not yet confirmed to load).
+`audio.vpp_pc` holds XACT 3 banks (`.xsb` sound banks, `.xwb` wave banks, version 44) without cue names. `foley.xtbl` names each sound and its bank (`<AudioBanks>`), but its order is not the cue order. The cue numbers come from `audio_boot.idx_map` and `audio_level.idx_map` in `meshes.vpp_pc`: text files listing each bank (`"Weapons"	146`) and then every cue as index and name. The foley parser (`0x00479740`) calls `0x00481D20` with the sound's name and bank; `0x00470230` finds the bank, and `0x0046F8F0` looks the name up by its string hash (`0x00BDCB30`) in the table the idx_map loader (`0x0046FA40`) builds, stripping " Debug" from bank names. For example `MAC10_FIRE_PLAYER` is Weapons cue 109, a looping play of wave 37 (cue 25, which an earlier build replaced by mistake, is `FLAMETHROWER_LOOP`). Automatic weapons loop their fire cue while the trigger is held and play the release cue after it. `tools/sr2/xsb.py` decodes sound banks (cues, sounds, events) and `waves_of(game, bank, cue)` gives a named cue's waves; `tools/sr2/xwb.py` replaces waves with PCM. A loose `Weapons.xwb` loads (an in-memory bank; the loose file loader logs it).
 
 ## Item meshes (`.smesh_pc`)
 
@@ -127,6 +127,37 @@ Cutscene lightsets (`*-Lightset.xtbl` in `common.vpp_pc`; one in SS01-02 is a gr
 | +0x8C | handle collected by `0x004C8A40` (the lights attached to a given object, up to 16) |
 
 `Vehicle-Customization-Lightset.xtbl` is loaded at `0x007B9396`. The vehicle "light" managers (`vehicle_sirenlight_manager` vtable `0x00E467C4`, headlight `0x00E4664C`, brakelight `0x00E466B4`, base `0x00E465F4`) drive glares (`glares.xtbl` coronas such as `SR SirenBlue 01`, name table at `0x00E877C0`), which don't light the ground. Not found yet: the function that turns a light record into a dynamic light.
+
+## Characters for extra co-op players
+
+Each player past the game's own two gets a character that copies what they do on their PC, so the
+game needs a way to spawn a character, switch its AI off and move it.
+
+| Address | What |
+|---|---|
+| `*(0x021703D4)` | The local player (human object). Position at +0x14, orientation matrix at +0x20 (right, up, forward rows), the same layout as vehicles. |
+| `0x0098E400` | Spawns an NPC from a character table entry near the player (Juiced's `SpawnNPC`, `ecx` = character id from `GetCharacterID`, pushes `*(0x021703D4)`); Juiced's hook at `0x0098EE0B` captures the new object. |
+| `0x0095F090` | Teleports a human to a position (Juiced's `TeleportNPC`: `eax` = human, pushes position, -1, 0). |
+| `0x00966720` | Never die (`__stdcall` human, flag). |
+| `0x00A52BB0` | Lua script name → human (`ecx` = name, `eax` = 0). `0x00A52CA0` / `0x00A52CD0` are Juiced's name → NPC / vehicle. |
+
+The mission scripts' Lua functions (491 of them) are registered by one function around
+`0x00A50000` that fills a table of {name, handler} pairs (`mov [esp+n], name` then
+`mov [esp+n+4], handler`); `D:\tools\sr2-re\lua-natives.json` lists them all. The ones that matter
+here, with what their handlers do once the name is resolved:
+
+| Lua function | Handler | Calls |
+|---|---|---|
+| `turn_invulnerable` / `turn_vulnerable` | `0x00A48040` / `0x00A483D0` | `0x00965F40(human, 1)`, then `0x00966090(human, flag)` |
+| `set_ignore_ai_flag` | `0x00A44A90` | Flips bit 3 of byte +0x103 of the object (list at +0xF8) |
+| `move_to_do` | `0x00A3A870` | Arguments: character, navpoint name, speed (1 walk, 2 run, 3 sprint when the character has the animations, checked through `0x006EA0A0` states 0x5C/0x61). Sets up the character with `0x009707C0`, then orders the move with `0x0099DD20` (`eax` = target position, the navpoint +0x1C; `edx` = flags word; pushes human, speed, -1, flags), keeps the order id at human +0x53C (counter `0x00E87D1C`) and returns it. |
+| `turn_to_do` | `0x00A48190` | |
+| `teleport` / `teleport_vehicle` | `0x00A47310` / `0x00A47540` | |
+| `vehicle_enter_do` | `0x00A494E0` | |
+| `npc_combat_enable` | `0x00A2C700` | |
+| `set_attack_player_flag` / `set_dont_attack_me_on_sight_flag` | `0x00A43BA0` / `0x00A448F0` | |
+| `npc_detection_enable` / `npc_hearing_enable` | `0x00A2D900` / `0x00A30B40` | |
+| `release_to_world` | `0x00A42040` | |
 
 ## SR2 Reloaded (`RLEngine.dll` / `reloaded.ini`) options worth porting
 

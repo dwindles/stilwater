@@ -58,9 +58,9 @@ if (Test-Path $stage) { Remove-Item $stage -Recurse -Force }
 New-Item -ItemType Directory -Force "$stage\Stilwater", "$stage\mods" | Out-Null
 Copy-Item "$root\installer\*" $stage
 Copy-Item "$root\dist\DFEngine.dll" $stage
-Get-ChildItem "$root\dist" -File | Where-Object { $_.Name -ne "DFEngine.dll" -and $_.Extension -ne ".pdb" } |
-    Copy-Item -Destination "$stage\Stilwater"
-if (Test-Path "$root\launcher\assets") { Copy-Item "$root\launcher\assets" "$stage\Stilwater" -Recurse }
+# The launcher and runtime, with the launcher's ui\ and WebView2's runtimes\ (not logs or caches).
+Get-ChildItem "$root\dist" | Where-Object { $_.Name -notin "DFEngine.dll", "logs", "cache", "updates" -and $_.Extension -notin ".pdb", ".xml" } |
+    Copy-Item -Destination "$stage\Stilwater" -Recurse
 # DXVK (32-bit d3d9.dll and dxgi.dll), which the installer adds on PCs with Vulkan.
 $dxvk = if ($env:STILWATER_DXVK) { $env:STILWATER_DXVK } else { "D:\tools\dxvk-3.1.1\dxvk-3.1.1\x32" }
 if (-not (Test-Path "$dxvk\d3d9.dll")) { throw "DXVK not found in $dxvk (set STILWATER_DXVK to a DXVK x32 folder)." }

@@ -4,6 +4,7 @@ GameSpy splits an account into a user (email and password) and profiles (nicks) 
 that split because the protocol carries both ids, but give every nick its own user: a nick is
 unique here (GameSpy's namespace 1 wasn't), so a friend can be found by nick alone. The password is
 stored as its MD5, which is what GameSpy's login hash is built from."""
+import hashlib
 import re
 import sqlite3
 import time
@@ -42,7 +43,17 @@ CREATE TABLE IF NOT EXISTS messages (
     body TEXT NOT NULL,
     sent INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS profile_extras (
+    profile_id INTEGER PRIMARY KEY,
+    bio TEXT NOT NULL DEFAULT '',
+    avatar BLOB,
+    avatar_hash TEXT NOT NULL DEFAULT '',
+    updated INTEGER NOT NULL
+);
 """
+# Profile pictures: JPEG or PNG, at most this many bytes (the launcher sends 160 x 160 JPEGs).
+AVATAR_BYTES = 64 * 1024
+BIO_CHARS = 120
 
 NICK = re.compile(r"^[A-Za-z0-9_\-\[\]\.]{3,20}$")
 EMAIL = re.compile(r"^[^@\s\\]+@[^@\s\\]+\.[^@\s\\]+$")
@@ -151,3 +162,36 @@ class Accounts:
             rows = self.db.execute("SELECT sender, body, sent FROM messages WHERE recipient = ? ORDER BY id", (recipient,)).fetchall()
             self.db.execute("DELETE FROM messages WHERE recipient = ?", (recipient,))
         return rows
+
+    # --- public profile: picture and bio
+
+    def public_profile(self, profile_id: int):
+        """{nick, created, bio, avatar, avatar_hash} or None."""
+        row = self.db.execute(
+            "SELECT p.nick, p.created, e.bio, e.avatar, e.avatar_hash FROM profiles p "
+            "LEFT JOIN profile_extras e ON e.profile_id = p.id WHERE p.id = ?", (profile_id,)).fetchone()
+        if row is None:
+            return None
+        return {"nick": row["nick"], "created": row["created"], "bio": row["bio"] or "",
+                "avatar": row["avatar"] or b"", "avatar_hash": row["avatar_hash"] or ""}
+
+    def set_profile(self, profile_id: int, bio: str | None = None, avatar: bytes | None = None) -> str:
+        """Changes the bio and/or picture (b"" removes it); returns the picture's hash. Errors carry
+        text for the player."""
+        if avatar:
+            if len(avatar) > AVATAR_BYTES:
+                raise AccountError(0, "That picture is too big.")
+            if not (avatar.startswith(b"\xff\xd8\xff") or avatar.startswith(b"\x89PNG\r\n\x1a\n")):
+                raise AccountError(0, "Profile pictures must be JPEG or PNG.")
+        current = self.public_profile(profile_id)
+        if current is None:
+            raise AccountError(0, "No such profile.")
+        bio = current["bio"] if bio is None else bio[:BIO_CHARS]
+        if avatar is None:
+            avatar, digest = current["avatar"], current["avatar_hash"]
+        else:
+            digest = hashlib.sha1(avatar).hexdigest()[:16] if avatar else ""
+        with self.db:
+            self.db.execute("INSERT OR REPLACE INTO profile_extras (profile_id, bio, avatar, avatar_hash, updated) "
+                            "VALUES (?, ?, ?, ?, ?)", (profile_id, bio, avatar or None, digest, int(time.time())))
+        return digest

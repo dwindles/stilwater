@@ -21,7 +21,20 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <None Include="assets\logo.png" Condition="Exists('assets\logo.png')" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="assets\logo.ico" Condition="Exists('assets\logo.ico')" CopyToOutputDirectory="PreserveNewest" />
+    <!-- The window's web UI (MainForm, Bridge); mock.js only serves previews in a browser. -->
+    <None Include="ui\**" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4078.44" />
+  </ItemGroup>
+
+  <!-- The WebView2 package always references its WPF control too; this is a WinForms app. -->
+  <Target Name="DropWebView2Wpf" BeforeTargets="ResolveAssemblyReferences">
+    <ItemGroup>
+      <Reference Remove="@(Reference)" Condition="'%(Filename)' == 'Microsoft.Web.WebView2.Wpf'" />
+    </ItemGroup>
+  </Target>
 
 </Project>

@@ -15,7 +15,7 @@ internal static class Updater
 {
     public const string Repository = "dwindles/stilwater";
 
-    public sealed record Release(Version Version, string Tag, string ZipUrl, long Size);
+    public sealed record Release(Version Version, string Tag, string ZipUrl, long Size, string Notes, DateTime Published);
 
     /// <summary>This launcher's version (the release's, for installed builds).</summary>
     public static Version Current { get; } = Normalize(Assembly.GetExecutingAssembly().GetName().Version ?? new Version(0, 0, 0));
@@ -57,7 +57,9 @@ internal static class Updater
         {
             var name = asset.GetProperty("name").GetString() ?? "";
             if (name.StartsWith("Stilwater", StringComparison.OrdinalIgnoreCase) && name.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
-                return new Release(Normalize(version), tag, asset.GetProperty("browser_download_url").GetString()!, asset.GetProperty("size").GetInt64());
+                return new Release(Normalize(version), tag, asset.GetProperty("browser_download_url").GetString()!, asset.GetProperty("size").GetInt64(),
+                                   json.RootElement.TryGetProperty("body", out var body) ? body.GetString() ?? "" : "",
+                                   json.RootElement.TryGetProperty("published_at", out var at) && at.TryGetDateTime(out var when) ? when : DateTime.MinValue);
         }
         throw new InvalidDataException($"Release {tag} has no Stilwater zip.");
     }

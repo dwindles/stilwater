@@ -7,6 +7,7 @@ or (when also "condensed") as a single zlib stream over all files.
     python vpp.py list <packfile> [substring]
     python vpp.py extract <packfile> <substring> <out_dir>
 """
+import mmap
 import struct
 import sys
 import zlib
@@ -20,13 +21,15 @@ def _align(value, alignment=2048):
 
 
 def _cstring(data, offset):
-    return data[offset:data.index(b"\0", offset)].decode("latin-1")
+    return data[offset:data.find(b"\0", offset)].decode("latin-1")
 
 
 class Packfile:
     def __init__(self, path):
         self.path = Path(path)
-        self.data = self.path.read_bytes()
+        # Mapped rather than read: meshes.vpp_pc and the chunk packfiles are over a gigabyte.
+        with open(self.path, "rb") as f:
+            self.data = mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ)
         d = self.data
         magic, version = struct.unpack_from("<II", d, 0)
         if version != 4:

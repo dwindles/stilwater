@@ -25,10 +25,10 @@ async def run(bind: str, data: str, keys: str, web_bind: str):
     servers = [
         await asyncio.start_server(presence.serve_client, bind, 29900),
         await asyncio.start_server(presence.serve_search, bind, 29901),
-        await Master().start(bind),
+        await Master(presence.nicks_at).start(bind),
         await WebServices(presence, accounts, data, keys).start(web_bind),
     ]
-    await NatNeg().start(bind)
+    await NatNeg(presence.nicks_at).start(bind)
     logging.info("Stilwater Online listening on %s", bind)
     await asyncio.gather(*(s.serve_forever() for s in servers))
 

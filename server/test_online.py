@@ -6,6 +6,7 @@ the game's GameSpy code does.
 The web services are checked through port 80 (nginx) unless another port is given, e.g. 29980 for
 a server running locally. STILWATER_AUTH_KEY overrides the AuthService public key (hex modulus).
 """
+import base64
 import hashlib
 import http.client
 import os
@@ -169,6 +170,23 @@ def main():
     check("invite message", b.read_until("bm", bm=1)["msg"].startswith("STILWATER_INVITE|"))
     a.send(("getprofile", ""), ("sesskey", a.session_key), ("profileid", b.profile_id), ("id", 7))
     check("getprofile", a.read_until("pi")["nick"] == b.nick)
+
+    # Profile pictures and bios (the launcher's \swhello\ extensions).
+    a.send(("swhello", ""))
+    b.send(("swhello", ""))
+    picture = b"\xff\xd8\xff\xe0" + secrets.token_bytes(3000)
+    a.send(("swsetprofile", ""), ("sesskey", a.session_key), ("bio", "Stilwater test"),
+           ("avatar", base64.b64encode(picture).decode()), ("id", 8))
+    digest = a.read_until("swprofile")["hash"]
+    check("profile picture saved", len(digest) == 16)
+    check("friend told the picture changed", b.read_until("swprofilechanged", profileid=a.profile_id)["hash"] == digest)
+    b.send(("swgetprofile", ""), ("sesskey", b.session_key), ("profileid", a.profile_id), ("have", ""), ("id", 9))
+    got = b.read_until("swprofile", profileid=a.profile_id)
+    check("profile read back", base64.b64decode(got["avatar"]) == picture and got["bio"] == "Stilwater test")
+    b.send(("swgetprofile", ""), ("sesskey", b.session_key), ("profileid", a.profile_id), ("have", digest), ("id", 10))
+    check("cached picture not sent again", "avatar" not in b.read_until("swprofile", profileid=a.profile_id))
+    a.send(("swsetprofile", ""), ("sesskey", a.session_key), ("avatar", base64.b64encode(b"GIF89a....").decode()), ("id", 11))
+    check("non-image picture refused", "error" in a.read_until("error", id=11))
 
     # A host registers through QR2.
     host = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)

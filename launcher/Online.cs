@@ -27,6 +27,8 @@ internal sealed class Online : IDisposable
 
     public sealed record Friend(int ProfileId, string Name, Status Status, string Activity);
     public sealed record Request(int ProfileId, string Name, string Signature);
+    /// <summary>A player's public profile (Stilwater Online only): bio and picture (JPEG or PNG).</summary>
+    public sealed record Profile(int ProfileId, string Bio, string Hash, byte[]? Picture);
 
     public event Action? Changed;
     public event Action<Friend>? Invited;
@@ -36,8 +38,13 @@ internal sealed class Online : IDisposable
     private readonly Dictionary<int, Friend> _friends = [];
     private readonly Dictionary<int, Request> _requests = [];
     private readonly Dictionary<int, string> _names = [];
+    private readonly Dictionary<int, Profile> _profiles = [];
+    // Requests waiting for their reply, by \id\.
+    private readonly Dictionary<string, TaskCompletionSource<Dictionary<string, string>>> _waiting = [];
     private TcpClient? _client;
     private NetworkStream? _stream;
+    private MessageReader? _reader;
+    private readonly SemaphoreSlim _writing = new(1, 1);
     private CancellationTokenSource? _stop;
     private int _sessionKey;
     private int _nextId = 2;
@@ -90,6 +97,19 @@ internal sealed class Online : IDisposable
         }
     }
 
+    /// <summary>The round trip to the account server in milliseconds (an ICMP echo, so the
+    /// server does no work for it), or null when it doesn't reply.</summary>
+    public static async Task<long?> PingAsync()
+    {
+        try
+        {
+            using var ping = new System.Net.NetworkInformation.Ping();
+            var reply = await ping.SendPingAsync(Presence, 1500);
+            return reply.Status == System.Net.NetworkInformation.IPStatus.Success ? reply.RoundtripTime : null;
+        }
+        catch (System.Net.NetworkInformation.PingException) { return null; }
+    }
+
     /// <summary>Signs in with the game's login (nick and email, as SR2 does). Throws with
     /// the service's message when it refuses.</summary>
     public async Task SignInAsync(GameLogin login)
@@ -98,7 +118,8 @@ internal sealed class Online : IDisposable
         _client = new TcpClient();
         await _client.ConnectAsync(Presence, PresencePort).WaitAsync(TimeSpan.FromSeconds(10));
         _stream = _client.GetStream();
-        var hello = Parse(await ReadMessageAsync(_stream, CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(10)));
+        _reader = new MessageReader(_stream);
+        var hello = Parse(await _reader.ReadAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(10)));
         var serverChallenge = hello.GetValueOrDefault("challenge", "");
 
         var clientChallenge = new string(Enumerable.Range(0, 32).Select(_ => (char)('A' + RandomNumberGenerator.GetInt32(26))).ToArray());
@@ -108,7 +129,7 @@ internal sealed class Online : IDisposable
         await SendAsync($@"\login\\challenge\{clientChallenge}\user\{user}\partnerid\0\response\{response}\firewall\1\port\0" +
                         $@"\productid\{ProductId}\gamename\{GameName}\namespaceid\{NamespaceId}\sdkrevision\11\quiet\0\id\1\final\");
 
-        var reply = Parse(await ReadMessageAsync(_stream, CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(15)));
+        var reply = Parse(await _reader.ReadAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(15)));
         if (reply.ContainsKey("error"))
         {
             Close();
@@ -126,6 +147,90 @@ internal sealed class Online : IDisposable
         _ = ReadLoopAsync(_stop.Token);
         _ = KeepAliveAsync(_stop.Token);
         await SetStatusAsync(Status.Online, "In the Stilwater launcher");
+        if (!UsesOpenSpy)
+        {
+            // Stilwater Online's own extensions: tells the server this is the launcher (it then
+            // sends profile changes), and loads our profile.
+            await SendAsync(@"\swhello\\final\");
+            _ = LoadProfileAsync(ProfileId);
+        }
+    }
+
+    public Profile? ProfileOf(int profileId) => _profiles.GetValueOrDefault(profileId);
+
+    /// <summary>Changes your picture (an empty array removes it) and/or bio; null leaves either as it is.</summary>
+    public async Task SetProfileAsync(byte[]? picture, string? bio)
+    {
+        if (UsesOpenSpy) throw new InvalidOperationException("Profiles are a Stilwater Online feature.");
+        var message = new StringBuilder($@"\swsetprofile\\sesskey\{_sessionKey}");
+        if (bio is not null) message.Append($@"\bio\{Clean(bio)}");
+        if (picture is not null) message.Append($@"\avatar\{Convert.ToBase64String(picture)}");
+        var reply = await RequestAsync(message.ToString());
+        var old = _profiles.GetValueOrDefault(ProfileId);
+        var hash = reply.GetValueOrDefault("hash", "");
+        var kept = picture ?? old?.Picture;
+        _profiles[ProfileId] = new Profile(ProfileId, bio ?? old?.Bio ?? "", hash, kept is { Length: > 0 } ? kept : null);
+        AvatarCache.Write(ProfileId, hash, _profiles[ProfileId].Picture);
+        Raise();
+    }
+
+    /// <summary>Fetches a profile; the picture only comes when it differs from the cached one.</summary>
+    private async Task LoadProfileAsync(int profileId)
+    {
+        if (UsesOpenSpy || !SignedIn) return;
+        var cached = AvatarCache.Read(profileId);
+        try
+        {
+            var reply = await RequestAsync($@"\swgetprofile\\sesskey\{_sessionKey}\profileid\{profileId}\have\{cached?.Hash ?? ""}");
+            var hash = reply.GetValueOrDefault("hash", "");
+            byte[]? picture = null;
+            if (reply.TryGetValue("avatar", out var data)) picture = Convert.FromBase64String(data);
+            else if (hash.Length > 0 && cached?.Hash == hash) picture = cached.Value.Data;
+            _profiles[profileId] = new Profile(profileId, reply.GetValueOrDefault("bio", ""), hash, picture);
+            if (reply.ContainsKey("avatar") || hash.Length == 0) AvatarCache.Write(profileId, hash, picture);
+            Raise();
+        }
+        catch (Exception e) when (e is InvalidOperationException or IOException or TimeoutException or FormatException) { }
+    }
+
+    private async Task<Dictionary<string, string>> RequestAsync(string body)
+    {
+        var id = (_nextId++).ToString();
+        var reply = new TaskCompletionSource<Dictionary<string, string>>(TaskCreationOptions.RunContinuationsAsynchronously);
+        _waiting[id] = reply;
+        try
+        {
+            await SendAsync($@"{body}\id\{id}\final\");
+            return await reply.Task.WaitAsync(TimeSpan.FromSeconds(15));
+        }
+        finally { _waiting.Remove(id); }
+    }
+
+    /// <summary>Profile pictures kept between runs: &lt;launcher&gt;\cache\avatars\&lt;profile id&gt;-&lt;hash&gt;.img.</summary>
+    private static class AvatarCache
+    {
+        private static string Folder => Path.Combine(Runtime.Folder, "cache", "avatars");
+
+        public static (string Hash, byte[] Data)? Read(int profileId)
+        {
+            try
+            {
+                var file = Directory.Exists(Folder) ? Directory.GetFiles(Folder, $"{profileId}-*.img").FirstOrDefault() : null;
+                return file is null ? null : (Path.GetFileNameWithoutExtension(file)[(profileId.ToString().Length + 1)..], File.ReadAllBytes(file));
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return null; }
+        }
+
+        public static void Write(int profileId, string hash, byte[]? data)
+        {
+            try
+            {
+                Directory.CreateDirectory(Folder);
+                foreach (var old in Directory.GetFiles(Folder, $"{profileId}-*.img")) File.Delete(old);
+                if (data is { Length: > 0 } && hash.Length > 0) File.WriteAllBytes(Path.Combine(Folder, $"{profileId}-{hash}.img"), data);
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
+        }
     }
 
     /// <summary>Creates an account (what the game's Create account does).</summary>
@@ -134,12 +239,13 @@ internal sealed class Online : IDisposable
         using var tcp = new TcpClient();
         await tcp.ConnectAsync(Presence, PresencePort).WaitAsync(TimeSpan.FromSeconds(10));
         var stream = tcp.GetStream();
-        await ReadMessageAsync(stream, CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(10));
+        var reader = new MessageReader(stream);
+        await reader.ReadAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(10));
         var message = $@"\newuser\\email\{login.Email}\nick\{login.Nick}\passwordenc\{EncodePassword(login.Password)}" +
                       $@"\productid\{ProductId}\gamename\{GameName}\namespaceid\{NamespaceId}\uniquenick\\partnerid\0\id\1\final\";
         var bytes = Encoding.ASCII.GetBytes(message);
         await stream.WriteAsync(bytes);
-        var reply = Parse(await ReadMessageAsync(stream, CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(15)));
+        var reply = Parse(await reader.ReadAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(15)));
         if (reply.ContainsKey("error"))
             throw new InvalidOperationException(reply.GetValueOrDefault("errmsg", "Account not created."));
     }
@@ -201,6 +307,7 @@ internal sealed class Online : IDisposable
         _stream?.Dispose();
         _client?.Dispose();
         _stream = null;
+        _reader = null;
         _client = null;
         _sessionKey = 0;
     }
@@ -209,9 +316,10 @@ internal sealed class Online : IDisposable
     {
         try
         {
-            while (!stop.IsCancellationRequested && _stream is not null)
+            var reader = _reader ?? throw new IOException("Not connected.");
+            while (!stop.IsCancellationRequested)
             {
-                var message = Parse(await ReadMessageAsync(_stream, stop));
+                var message = Parse(await reader.ReadAsync(stop));
                 _ui.Post(_ => Handle(message), null);
             }
         }
@@ -242,6 +350,19 @@ internal sealed class Online : IDisposable
 
     private void Handle(Dictionary<string, string> m)
     {
+        // A reply to one of our requests, or an error about it.
+        if (m.TryGetValue("id", out var replyTo) && _waiting.TryGetValue(replyTo, out var waiter) &&
+            (m.ContainsKey("swprofile") || m.ContainsKey("error")))
+        {
+            if (m.ContainsKey("error")) waiter.TrySetException(new InvalidOperationException(m.GetValueOrDefault("errmsg", $"{ServiceName} refused.")));
+            else waiter.TrySetResult(m);
+            return;
+        }
+        if (m.ContainsKey("swprofilechanged") && int.TryParse(m.GetValueOrDefault("profileid"), out var changed))
+        {
+            _ = LoadProfileAsync(changed);
+            return;
+        }
         if (m.TryGetValue("bdy", out _) && m.TryGetValue("list", out var list))
         {
             foreach (var part in list.Split(',', StringSplitOptions.RemoveEmptyEntries))
@@ -263,6 +384,7 @@ internal sealed class Online : IDisposable
                     var signed = text.IndexOf("|signed|", StringComparison.Ordinal);
                     _requests[id] = new Request(id, Name(id), signed >= 0 ? text[(signed + 8)..] : "");
                     LookUp(id);
+                    if (!_profiles.ContainsKey(id)) _ = LoadProfileAsync(id);
                     break;
                 case "1" when text.StartsWith(InvitePrefix, StringComparison.Ordinal):
                     if (_friends.TryGetValue(id, out var friend)) Invited?.Invoke(friend);
@@ -293,6 +415,7 @@ internal sealed class Online : IDisposable
     {
         _friends[id] = new Friend(id, Name(id), status, activity);
         LookUp(id);
+        if (!_profiles.ContainsKey(id)) _ = LoadProfileAsync(id);
     }
 
     private string Name(int id) => _names.TryGetValue(id, out var n) ? n : $"#{id}";
@@ -322,22 +445,55 @@ internal sealed class Online : IDisposable
     private async Task SendAsync(string message)
     {
         var stream = _stream ?? throw new InvalidOperationException("Not signed in.");
-        var bytes = Encoding.ASCII.GetBytes(message);
-        await stream.WriteAsync(bytes);
+        var bytes = Encoding.Latin1.GetBytes(message);
+        // Requests go out from several places at once (status, profile lookups); one at a time on the wire.
+        await _writing.WaitAsync();
+        try { await stream.WriteAsync(bytes); }
+        finally { _writing.Release(); }
     }
 
     private void Raise() => Changed?.Invoke();
 
-    private static async Task<string> ReadMessageAsync(NetworkStream stream, CancellationToken stop)
+    private static Task<string> ReadMessageAsync(NetworkStream stream, CancellationToken stop) =>
+        new MessageReader(stream).ReadAsync(stop);
+
+    /// <summary>Splits a connection's bytes into \final\-terminated messages. Several can arrive in
+    /// one read, and a profile picture makes one tens of kilobytes long.</summary>
+    private sealed class MessageReader(NetworkStream stream)
     {
-        var text = new StringBuilder();
-        var buffer = new byte[1];
-        while (!text.ToString().EndsWith(@"\final\", StringComparison.Ordinal))
+        private static readonly byte[] Final = Encoding.ASCII.GetBytes(@"\final\");
+        private readonly List<byte> _pending = [];
+        private readonly byte[] _buffer = new byte[16 * 1024];
+
+        public async Task<string> ReadAsync(CancellationToken stop)
         {
-            if (await stream.ReadAsync(buffer, stop) == 0) throw new IOException("Connection closed.");
-            text.Append((char)buffer[0]);
+            var searchFrom = 0;
+            while (true)
+            {
+                var end = IndexOfFinal(searchFrom);
+                if (end >= 0)
+                {
+                    var message = Encoding.Latin1.GetString(_pending.GetRange(0, end + Final.Length).ToArray());
+                    _pending.RemoveRange(0, end + Final.Length);
+                    return message;
+                }
+                searchFrom = Math.Max(0, _pending.Count - Final.Length + 1);
+                var read = await stream.ReadAsync(_buffer, stop);
+                if (read == 0) throw new IOException("Connection closed.");
+                _pending.AddRange(_buffer.AsSpan(0, read).ToArray());
+            }
         }
-        return text.ToString();
+
+        private int IndexOfFinal(int from)
+        {
+            for (var i = from; i + Final.Length <= _pending.Count; i++)
+            {
+                var j = 0;
+                while (j < Final.Length && _pending[i + j] == Final[j]) j++;
+                if (j == Final.Length) return i;
+            }
+            return -1;
+        }
     }
 
     private static Dictionary<string, string> Parse(string message)

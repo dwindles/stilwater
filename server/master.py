@@ -91,8 +91,9 @@ class Host:
 
 
 class Master:
-    def __init__(self):
+    def __init__(self, nicks_at=lambda ip: []):
         self.hosts: dict[tuple, Host] = {}
+        self.nicks_at = nicks_at        # who is signed in from an address, to name hosts in the feed
         self.transport: asyncio.DatagramTransport | None = None
         self.probe: asyncio.DatagramTransport | None = None
 
@@ -128,8 +129,9 @@ class Master:
                 host.registered = True
                 host.open = not host.challenged_direct
                 log.info("host %s:%d registered (%s)", *address, "open" if host.open else "behind NAT")
-                notify.post(f"Game hosted: {host.fields.get('hostname', '?')} ({host.fields.get('gametype', host.fields.get('gamemode', 'co-op'))}, "
-                            f"{'open' if host.open else 'behind NAT'})")
+                nicks = self.nicks_at(address[0])
+                hostname = host.fields.get("hostname", "")
+                notify.game_hosted(address[0], " & ".join(nicks) or hostname or "Someone", hostname, *nicks)
             self.transport.sendto(b"\xfe\xfd" + bytes([QR_REGISTERED]) + host.instance, address)
         elif kind in (QR_KEEPALIVE, QR_CLIENT_MESSAGE_ACK):
             host.seen = time.monotonic()
@@ -145,7 +147,7 @@ class Master:
         if fields.get("statechanged") == "2":
             if host:
                 log.info("host %s:%d closed", *address)
-                notify.post(f"Game closed: {host.fields.get('hostname', '?')}")
+                notify.game_closed(address[0])
                 del self.hosts[address]
             return
         if host is None or host.instance != instance:
@@ -182,6 +184,7 @@ class Master:
             now = time.monotonic()
             for address, host in list(self.hosts.items()):
                 if now - host.seen > SERVER_TIMEOUT:
+                    notify.game_closed(address[0])
                     del self.hosts[address]
 
     # --- server browser

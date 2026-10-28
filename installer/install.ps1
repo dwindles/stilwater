@@ -25,6 +25,8 @@ $ProgressPreference = "SilentlyContinue"        # Invoke-WebRequest's progress b
 $JuicedUrl = "https://github.com/kobraworksmodding/Saints-Row-2-Juiced-Patch/releases/download/v9.2.0/SR2_JUICED.zip"
 $JuicedSha256 = "F3C77AD368E808F142C1008B2D4A0DEA9FECC1F7E943542A5178F15BFE287B16"
 $DotNetUrl = "https://aka.ms/dotnet/8.0/windowsdesktop-runtime-win-x64.exe"      # the newest 8.0.x
+$WebView2Url = "https://go.microsoft.com/fwlink/p/?LinkId=2124703"                # Evergreen bootstrapper
+$WebView2Key = "SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"
 # Settings a fresh juiced.ini starts with: no debug console, clearer lighting, sharper smooth
 # shadows, GTA-style hold to aim.
 $JuicedDefaults = @{
@@ -53,6 +55,17 @@ function Find-Game {
         $folder = Join-Path $library "steamapps\common\$($dir.Groups[1].Value)"
         if ($dir.Success -and (Test-Path (Join-Path $folder "SR2_pc.exe"))) { return (Resolve-Path $folder).Path }
     }
+    return $null
+}
+
+function Pick-Folder {
+    Add-Type -AssemblyName System.Windows.Forms
+    $dialog = New-Object System.Windows.Forms.FolderBrowserDialog
+    $dialog.Description = "Pick your Saints Row 2 folder (the one with SR2_pc.exe)"
+    $dialog.ShowNewFolderButton = $false
+    $owner = New-Object System.Windows.Forms.Form -Property @{ TopMost = $true }    # keeps the picker in front
+    try { if ($dialog.ShowDialog($owner) -eq [System.Windows.Forms.DialogResult]::OK) { return $dialog.SelectedPath } }
+    finally { $owner.Dispose() }
     return $null
 }
 
@@ -91,20 +104,36 @@ Say "Stilwater $version installer" "Magenta"
 Say ""
 
 if (-not (Test-Path (Join-Path $Source "DFEngine.dll"))) { Fail "This folder isn't a Stilwater release (DFEngine.dll is missing). Extract the whole zip first." }
-if (-not $Game) { $Game = Find-Game }
-if (-not $Game -or -not (Test-Path (Join-Path $Game "SR2_pc.exe"))) {
-    Fail "Saints Row 2 wasn't found in your Steam libraries. Install it from Steam, or run: install.bat -Game ""<your Saints Row 2 folder>"""
+# The game: -Game, else the folder this zip was extracted into (or the one above it), else Steam's
+# install, else the player picks it.
+if (-not $Game) {
+    foreach ($candidate in $Source, (Split-Path $Source)) {
+        if ($candidate -and (Test-Path (Join-Path $candidate "SR2_pc.exe"))) { $Game = $candidate; break }
+    }
 }
+if (-not $Game) { $Game = Find-Game }
+while (-not $Game -or -not (Test-Path (Join-Path $Game "SR2_pc.exe"))) {
+    if ($Game) { Say "$Game has no SR2_pc.exe in it." "Yellow" }
+    Say "Pick your Saints Row 2 folder (the one with SR2_pc.exe) in the window that opens."
+    $Game = Pick-Folder
+    if (-not $Game) { Fail "No folder was picked, so nothing was installed." }
+}
+$Game = (Resolve-Path $Game).Path
 Say "Saints Row 2: $Game"
+# Extracted straight into the game folder: the core, launcher and mods are already in place.
+$inPlace = (Resolve-Path $Source).Path.TrimEnd("\") -eq $Game.TrimEnd("\")
 
 # Program Files game folders and the DirectX setup need administrator rights: ask once, up front.
 $system32 = Join-Path $env:windir "SysWOW64"
 if (-not (Test-Path $system32)) { $system32 = Join-Path $env:windir "System32" }
 $needsDirectX = @($DirectXDlls | Where-Object { -not (Test-Path (Join-Path $system32 $_)) }).Count -gt 0
 $needsDotNet = -not (Get-ChildItem (Join-Path $env:ProgramFiles "dotnet\shared\Microsoft.WindowsDesktop.App") -Directory -Filter "8.*" -ErrorAction SilentlyContinue)
+# The launcher's window is a WebView2 page; Windows 11 always has the runtime, Windows 10 nearly always.
+$needsWebView2 = -not ((Get-ItemProperty "HKLM:\$WebView2Key" -ErrorAction SilentlyContinue).pv -or
+                       (Get-ItemProperty ("HKCU:\" + $WebView2Key.Replace("WOW6432Node\", "")) -ErrorAction SilentlyContinue).pv)
 $admin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
-if (-not $admin -and ($needsDirectX -or $needsDotNet -or -not (Test-Writable $Game))) {
-    Say "Windows will ask for permission: the game folder, DirectX or .NET setup needs it."
+if (-not $admin -and ($needsDirectX -or $needsDotNet -or $needsWebView2 -or -not (Test-Writable $Game))) {
+    Say "Windows will ask for permission: the game folder, DirectX, .NET or WebView2 setup needs it."
     $arguments = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "`"$PSCommandPath`"", "-Game", "`"$Game`"", "-Source", "`"$Source`"")
     if ($JuicedZip) { $arguments += @("-JuicedZip", "`"$JuicedZip`"") }
     if ($WaitFor) { $arguments += @("-WaitFor", $WaitFor) }
@@ -220,17 +249,37 @@ if ($needsDotNet) {
     Say "Installed the .NET 8 Desktop Runtime"
 }
 
+# --- WebView2 Runtime for the launcher's window
+if ($needsWebView2) {
+    Say "Installing the Microsoft Edge WebView2 Runtime..."
+    $setup = Join-Path $Game "_stilwater_setup\MicrosoftEdgeWebview2Setup.exe"
+    New-Item -ItemType Directory -Force (Split-Path $setup) | Out-Null
+    try { Invoke-WebRequest $WebView2Url -OutFile $setup -UseBasicParsing }
+    catch { Fail "Couldn't download the WebView2 Runtime ($($_.Exception.Message)). Check your internet connection and run install.bat again." }
+    $signature = Get-AuthenticodeSignature $setup
+    if ($signature.Status -ne "Valid" -or $signature.SignerCertificate.Subject -notlike "*O=Microsoft Corporation*") {
+        Fail "The WebView2 download isn't signed by Microsoft, so it wasn't run."
+    }
+    Start-Process $setup -ArgumentList "/silent", "/install" -Wait
+    Remove-Item (Split-Path $setup) -Recurse -Force -ErrorAction SilentlyContinue
+    Say "Installed the WebView2 Runtime"
+}
+
 # --- Stilwater core
-Backup "DFEngine.dll"
-Copy-Item (Join-Path $Source "DFEngine.dll") (Join-Path $Game "DFEngine.dll") -Force
+if (-not $inPlace) {
+    Backup "DFEngine.dll"
+    Copy-Item (Join-Path $Source "DFEngine.dll") (Join-Path $Game "DFEngine.dll") -Force
+}
 Say "Installed the Stilwater core"
 
 # --- Launcher and runtime (settings and logs stay; launcher files an older version had go)
 $launcher = Join-Path $Game "Stilwater"
-New-Item -ItemType Directory -Force $launcher | Out-Null
-$shipped = Get-ChildItem (Join-Path $Source "Stilwater") -Name
-Get-ChildItem $launcher -File -Filter "StilwaterLauncher.*" | Where-Object { $shipped -notcontains $_.Name } | Remove-Item -Force
-Copy-Item (Join-Path $Source "Stilwater\*") $launcher -Recurse -Force
+if (-not $inPlace) {
+    New-Item -ItemType Directory -Force $launcher | Out-Null
+    $shipped = Get-ChildItem (Join-Path $Source "Stilwater") -Name
+    Get-ChildItem $launcher -File -Filter "StilwaterLauncher.*" | Where-Object { $shipped -notcontains $_.Name } | Remove-Item -Force
+    Copy-Item (Join-Path $Source "Stilwater\*") $launcher -Recurse -Force
+}
 Set-Content (Join-Path $launcher "version.txt") $version -Encoding ASCII
 Say "Installed the launcher into $launcher"
 
@@ -241,17 +290,20 @@ $lines = [Collections.Generic.List[string]]::new()
 if (Test-Path $loose) { [IO.File]::ReadAllLines($loose) | Where-Object { $_ -ne "" } | ForEach-Object { $lines.Add($_) } }
 if ($lines.Count -eq 0) { $lines.Add("mods") }
 $off = if (Test-Path (Join-Path $Source "mods-off.txt")) { Get-Content (Join-Path $Source "mods-off.txt") } else { @() }
-foreach ($mod in Get-ChildItem (Join-Path $Source "mods") -Directory) {
+$mods = @(Get-ChildItem (Join-Path $Source "mods") -Directory -Filter "STILWATER - *")
+foreach ($mod in $mods) {
     $target = Join-Path $Game "mods\$($mod.Name)"
-    if (Test-Path $target) { Remove-Item $target -Recurse -Force }
-    Copy-Item $mod.FullName $target -Recurse
+    if (-not $inPlace) {
+        if (Test-Path $target) { Remove-Item $target -Recurse -Force }
+        Copy-Item $mod.FullName $target -Recurse
+    }
     $entry = "mods/$($mod.Name)"
     if (-not ($lines -contains $entry) -and -not ($lines -contains "#$entry")) {
         $lines.Add($(if ($off -contains $entry) { "#$entry" } else { $entry }))
     }
 }
 [IO.File]::WriteAllText($loose, ($lines -join "`r`n") + "`r`n", [Text.Encoding]::ASCII)
-Say "Installed $((Get-ChildItem (Join-Path $Source "mods") -Directory).Count) Stilwater mods"
+Say "Installed $($mods.Count) Stilwater mods"
 
 # --- DXVK (Direct3D 9 on Vulkan) when the PC has 32-bit Vulkan. A d3d9.dll or dxgi.dll from
 # something else (ReShade, ENB) is left alone.

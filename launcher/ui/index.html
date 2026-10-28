@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Stilwater</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<div class="app">
+  <header class="topbar">
+    <div class="brand"><img class="logo" src="logo.png" alt=""><span class="wordmark">STILWATER</span></div>
+    <nav class="tabs">
+      <button class="tab active" data-page="play">Play</button>
+      <button class="tab" data-page="friends">Friends<b class="badge" id="friends-badge" hidden></b></button>
+      <button class="tab" data-page="mods">Mods</button>
+      <button class="tab" data-page="settings">Settings</button>
+    </nav>
+    <button class="me" id="me">
+      <span class="me-text"><b id="me-name">Not signed in</b><small id="me-status">Sign in</small></span>
+      <span class="avatar small" id="me-avatar"></span>
+    </button>
+  </header>
+
+  <main class="content">
+    <!-- Play -->
+    <section class="page play-page" id="page-play">
+      <div class="hero" id="hero"><div class="art" id="art"></div></div>
+      <div class="play-bar">
+        <button class="play" id="play-button">Play</button>
+        <div class="play-status" id="play-status"></div>
+        <button class="button notice" id="update-button" hidden></button>
+        <button class="button" id="upload-button" hidden>Upload</button>
+        <span class="version"><span id="version"></span> · <a class="maker" data-url="https://holdonquietly.com">holdonquietly.com</a></span>
+      </div>
+
+      <div class="columns">
+        <div>
+          <section class="block">
+            <div class="block-head"><h2>What's new</h2><a class="link" data-url="https://github.com/dwindles/stilwater/releases">All releases</a></div>
+            <div class="notes" id="notes"><p class="muted">Checking for the latest release…</p></div>
+          </section>
+          <details class="block">
+            <summary class="block-head"><h2>Game log</h2></summary>
+            <pre class="log" id="log">No log yet.</pre>
+          </details>
+        </div>
+        <div>
+          <section class="block">
+            <div class="block-head"><h2 id="service-name">Server</h2><span class="ping" id="ping-value"></span></div>
+            <svg class="ping-graph" id="ping-graph"></svg>
+            <p class="service"><span class="dot" id="service-dot"></span><span id="service-text">Checking…</span></p>
+          </section>
+          <section class="block">
+            <div class="block-head"><h2>Friends</h2><span class="muted small" id="online-count"></span></div>
+            <div id="online-friends"></div>
+          </section>
+          <section class="block">
+            <div class="block-head"><h2>Install</h2></div>
+            <ul class="checks" id="checks"></ul>
+          </section>
+        </div>
+      </div>
+    </section>
+
+    <!-- Friends -->
+    <section class="page" id="page-friends" hidden>
+      <div id="account"></div>
+      <div id="friends-body"></div>
+      <section class="block">
+        <div class="block-head"><h2>Playing co-op</h2></div>
+        <ol class="steps">
+          <li>Both of you start the game from Stilwater. The launcher signs out while the game runs, because the game uses the same account.</li>
+          <li>Host: load your save, open Co-op and choose Online.</li>
+          <li>Friend: Co-op → Online, then join from the list or accept the invite.</li>
+          <li>Check that your mods codes match first. Different mods can desync or crash the session.</li>
+        </ol>
+      </section>
+    </section>
+
+    <!-- Mods -->
+    <section class="page" id="page-mods" hidden>
+      <div class="code-row">
+        <span class="muted">Mods code</span>
+        <span class="code" id="mods-code">…</span>
+        <button class="button small" id="copy-code">Copy</button>
+        <span class="muted small note">Should match your co-op partner's. Changes apply the next time the game starts.</span>
+        <button class="button small" id="open-mods">Open folder</button>
+      </div>
+      <div id="mods-body"></div>
+    </section>
+
+    <!-- Settings -->
+    <section class="page" id="page-settings" hidden>
+      <p class="muted small lead">Saved in juiced.ini. Close the game before saving.</p>
+      <div id="settings-body"></div>
+      <div class="save-bar" id="save-bar" hidden>
+        <span>Unsaved changes</span>
+        <button class="button ghost" id="discard">Discard</button>
+        <button class="button accent" id="save">Save</button>
+      </div>
+    </section>
+  </main>
+</div>
+
+<div class="toasts" id="toasts"></div>
+<div class="modal-backdrop" id="modal" hidden><div class="modal" id="modal-body"></div></div>
+
+<script src="app.js"></script>
+</body>
+</html>

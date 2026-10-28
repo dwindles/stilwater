@@ -27,6 +27,14 @@ public sealed record GameInstall(string Folder)
         enabled ? "dxvk.hud = fps,frametimes" : "# dxvk.hud = fps,frametimes",
     ]);
 
+    /// <summary>The game this launcher belongs to: the folder above it when it's installed in
+    /// &lt;game&gt;\Stilwater\ (any copy of the game, from Steam or not), otherwise Steam's install.</summary>
+    public static GameInstall? Find()
+    {
+        var parent = Directory.GetParent(AppContext.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar))?.FullName;
+        return parent is not null && File.Exists(Path.Combine(parent, "SR2_pc.exe")) ? new GameInstall(parent) : FindSteamInstall();
+    }
+
     public static GameInstall? FindSteamInstall()
     {
         var steam = Registry.GetValue(@"HKEY_CURRENT_USER\Software\Valve\Steam", "SteamPath", null) as string;
@@ -50,6 +58,23 @@ public sealed record GameInstall(string Folder)
             if (Directory.Exists(folder)) return new GameInstall(Path.GetFullPath(folder));
         }
         return null;
+    }
+
+    /// <summary>Saints Row 2's library art (library_hero.jpg) in Steam's cache, when this PC's Steam
+    /// has shown the game: in librarycache\9480\ (or a subfolder) on newer Steam, as
+    /// 9480_library_hero.jpg on older.</summary>
+    public static string? SteamHeroArt()
+    {
+        if (Registry.GetValue(@"HKEY_CURRENT_USER\Software\Valve\Steam", "SteamPath", null) is not string steam) return null;
+        var cache = Path.Combine(steam, "appcache", "librarycache");
+        var folder = Path.Combine(cache, SteamAppId.ToString());
+        try
+        {
+            var art = Directory.Exists(folder) ? Directory.EnumerateFiles(folder, "library_hero.jpg", SearchOption.AllDirectories).FirstOrDefault() : null;
+            art ??= Path.Combine(cache, $"{SteamAppId}_library_hero.jpg");
+            return File.Exists(art) ? Path.GetFullPath(art) : null;
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return null; }
     }
 
     public ExeKind GetExeKind()
