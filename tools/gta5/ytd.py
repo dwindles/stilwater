@@ -20,9 +20,13 @@ FOURCC = {b"DXT1": "DXT1", b"DXT3": "DXT3", b"DXT5": "DXT5", b"ATI1": "BC4", b"A
 
 
 def textures(path):
-    """{name: (width, height, format, levels, bytes of all levels)}"""
-    res = Resource(path)
-    root = 0x50000000
+    """{name: (width, height, format, levels, buffer, offset of the pixel data)} of a .ytd."""
+    return dictionary(Resource(path), 0x50000000)
+
+
+def dictionary(res, root):
+    """The same for the TextureDictionary at root: a .ytd's root, or one embedded in a drawable
+    (pointer at +0x08 of its shader group)."""
     out = {}
     for pointer in res.pointer_list(root + 0x30):
         name = _cstr(res, res.u64(pointer, 0x28))

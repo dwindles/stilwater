@@ -15,3 +15,10 @@ logs/
 # Game-derived and generated mod files
 mods/*/original/
 mods/*/out/
+
+# Release packages (tools\release.ps1)
+release/
+
+# Python
+__pycache__/
+*.pyc

@@ -2,6 +2,11 @@
 
 Pure Python + numpy, written for game-asset sizes (tens of thousands of triangles). Open boundary
 edges get extra constraint planes so silhouettes and holes keep their shape.
+
+Textured meshes: keep vertices split at UV seams (weld only identical position + UV), pass the UVs
+(and normals) as attributes and lock_boundary=True. Seams are then open boundaries whose vertices
+never move, so neighbouring UV islands stay joined, and the attributes of collapsed vertices are
+interpolated along the collapsed edge.
 """
 import heapq
 
@@ -24,9 +29,11 @@ def _plane_quadric(p0, n):
     return np.outer(v, v)
 
 
-def simplify(positions, triangles, target, boundary_weight=100.0):
-    """Collapse edges until at most `target` triangles remain. Returns (positions, triangles)."""
+def simplify(positions, triangles, target, boundary_weight=100.0, attributes=None, lock_boundary=False):
+    """Collapse edges until at most `target` triangles remain. Returns (positions, triangles), plus
+    the surviving vertices' attributes ((N, k) per-vertex values) when given."""
     pos = [np.asarray(p, dtype=float) for p in positions]
+    attr = None if attributes is None else [np.asarray(a, dtype=float) for a in attributes]
     tris = [list(t) for t in triangles]
     alive = [True] * len(tris)
     vert_tris = [set() for _ in pos]
@@ -68,9 +75,20 @@ def simplify(positions, triangles, target, boundary_weight=100.0):
                 quad[w] += q
 
     version = [0] * len(pos)
+    locked = set()
+    if lock_boundary:
+        for (u, w), count in edge_count.items():
+            if count == 1:
+                locked.update((u, w))
 
     def cost(u, w):
         q = quad[u] + quad[w]
+        if u in locked or w in locked:
+            if u in locked and w in locked:
+                return float("inf"), None
+            p = pos[u] if u in locked else pos[w]
+            v4 = np.append(p, 1.0)
+            return float(v4 @ q @ v4), p
         best, best_err = None, None
         a = q.copy()
         a[3] = [0, 0, 0, 1]
@@ -78,6 +96,10 @@ def simplify(positions, triangles, target, boundary_weight=100.0):
             if abs(np.linalg.det(a)) > 1e-10:
                 best = np.linalg.solve(a, [0, 0, 0, 1])[:3]
         except np.linalg.LinAlgError:
+            best = None
+        # Nearly flat or thin regions make the quadric nearly singular, and its optimum can land far
+        # off the surface (spikes); keep it only near the edge.
+        if best is not None and np.linalg.norm(best - (pos[u] + pos[w]) / 2) > np.linalg.norm(pos[u] - pos[w]):
             best = None
         candidates = [pos[u], pos[w], (pos[u] + pos[w]) / 2] + ([best] if best is not None else [])
         for p in candidates:
@@ -96,12 +118,16 @@ def simplify(positions, triangles, target, boundary_weight=100.0):
     live = sum(alive)
     while live > target and heap:
         err, u, w, vu, vw = heapq.heappop(heap)
+        if err == float("inf"):
+            break
         if version[u] != vu or version[w] != vw or not vert_tris[u] or not vert_tris[w]:
             continue
         shared = vert_tris[u] & vert_tris[w]
         if not shared:
             continue
-        _, p = cost(u, w)
+        err, p = cost(u, w)
+        if p is None:
+            continue
         # Reject collapses that flip a surviving triangle around u or w.
         flips = False
         for t_index in (vert_tris[u] | vert_tris[w]) - shared:
@@ -115,6 +141,16 @@ def simplify(positions, triangles, target, boundary_weight=100.0):
         if flips:
             continue
         # Collapse w into u.
+        if attr is not None:
+            if w in locked:
+                attr[u] = attr[w]
+            elif u not in locked:
+                edge = pos[w] - pos[u]
+                t = float(np.clip(np.dot(p - pos[u], edge) / max(np.dot(edge, edge), 1e-20), 0, 1))
+                attr[u] = attr[u] * (1 - t) + attr[w] * t
+        if w in locked:
+            locked.discard(w)
+            locked.add(u)
         pos[u] = p
         quad[u] = quad[u] + quad[w]
         for t_index in shared:
@@ -132,12 +168,15 @@ def simplify(positions, triangles, target, boundary_weight=100.0):
         neighbours = {v for t_index in vert_tris[u] for v in tris[t_index]} - {u}
         for v in neighbours:
             e, _ = cost(u, v)
-            heapq.heappush(heap, (e, min(u, v), max(u, v), version[min(u, v)], version[max(u, v)]))
+            if e != float("inf"):
+                heapq.heappush(heap, (e, min(u, v), max(u, v), version[min(u, v)], version[max(u, v)]))
 
     used = sorted({v for i, t in enumerate(tris) if alive[i] for v in t})
     remap = {v: k for k, v in enumerate(used)}
     out_tris = np.array([[remap[v] for v in t] for i, t in enumerate(tris) if alive[i]], dtype=int).reshape(-1, 3)
-    return np.array([pos[v] for v in used]), out_tris
+    if attr is None:
+        return np.array([pos[v] for v in used]), out_tris
+    return np.array([pos[v] for v in used]), out_tris, np.array([attr[v] for v in used])
 
 
 def vertex_normals(positions, triangles):

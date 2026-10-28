@@ -5,15 +5,21 @@ string count and the u32 file offset of its run in the index; the index (a u32 f
 string, grouped by bucket); then the records: a big-endian u32 key hash and a null-terminated
 UTF-16BE string. A string's bucket is hash & (bucket count - 1).
 
-The game hashes the key names (e.g. CUST_ITEM_MEN'S_TIGHT_JEANS); that function isn't reproduced
-here, so an existing string's hash is found by its text.
+The key hash is the game's string hash of the key name (e.g. CUST_ITEM_MEN'S_TIGHT_JEANS): CRC-32
+of the lowercased name without the usual inversions (key_hash).
 
     python strings.py list <file.le_strings> [substring]
 """
 import struct
 import sys
+import zlib
 
 MAGIC = 0xA84C7F73
+
+
+def key_hash(name):
+    """The game's hash of a string key (CRC-32 table at 0xE843B8, starting from 0, lowercased)."""
+    return zlib.crc32(name.lower().encode(), 0xFFFFFFFF) ^ 0xFFFFFFFF
 
 
 def read(data):

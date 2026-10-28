@@ -9,7 +9,7 @@
     <AssemblyName>StilwaterLauncher</AssemblyName>
     <RootNamespace>Stilwater.Launcher</RootNamespace>
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
-    <Version>0.1.0</Version>
+    <Version>0.2.0</Version>
     <Product>Stilwater</Product>
     <Company>holdonquietly.com</Company>
     <Authors>holdonquietly.com</Authors>

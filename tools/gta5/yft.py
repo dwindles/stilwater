@@ -1,4 +1,4 @@
-"""Read GTA V vehicle models (.yft fragments in RSC7 resources) far enough to get their meshes.
+"""Read GTA V models (.yft fragments, .ydr drawables; RSC7 resources) far enough to get their meshes.
 
 RSC7 resource: "RSC7", u32 version, u32 system flags, u32 graphics flags, then raw deflate data
 that inflates to the system segment (pointers 0x5XXXXXXX) followed by the graphics segment
@@ -64,6 +64,8 @@ def read_geometry(res, pointer):
     index_buffer, = res.unpack("<Q", pointer, 0x38)
     stride, = res.unpack("<H", vertex_buffer, 0x08)
     data_pointer, count = res.unpack("<QI", vertex_buffer, 0x10)
+    if not data_pointer:                              # some resources only fill the second pointer
+        data_pointer, = res.unpack("<Q", vertex_buffer, 0x20)
     info_pointer, = res.unpack("<Q", vertex_buffer, 0x30)
     flags, decl_stride, _, _, types = res.unpack("<IHBBQ", info_pointer)
     if decl_stride != stride:
@@ -114,7 +116,21 @@ def read_model(res, pointer):
 def read_fragment(path):
     """dict(lods={'high': [models], ...}, bounds=(min, max)) for the fragment's main drawable."""
     res = Resource(path)
-    drawable = res.u64(0x50000000, 0x30)
+    return _read_drawable(res, res.u64(0x50000000, 0x30))
+
+
+def read_drawable(path):
+    """The same for a .ydr, whose root is the drawable."""
+    return _read_drawable(Resource(path), 0x50000000)
+
+
+def read_dictionary(path):
+    """The drawables of a .ydd (drawable dictionary), whose root lists them at +0x30."""
+    res = Resource(path)
+    return [_read_drawable(res, d) for d in res.pointer_list(0x50000000 + 0x30)]
+
+
+def _read_drawable(res, drawable):
     box_min = res.unpack("<3f", drawable, 0x30)
     box_max = res.unpack("<3f", drawable, 0x40)
     lods = {}

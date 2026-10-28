@@ -54,6 +54,16 @@ internal sealed class SettingsPage : UserControl
             AddRow(setting.Label, setting.Help, input);
         }
 
+        AddSection("Steam");
+        var steam = new Button
+        {
+            Text = "Set up", Width = InputWidth, Height = 28, FlatStyle = FlatStyle.Flat,
+            BackColor = Theme.Input, ForeColor = Theme.Text, FlatAppearance = { BorderSize = 0 }, Cursor = Cursors.Hand,
+        };
+        steam.Click += (_, _) => SetUpSteam();
+        AddRow("Play button opens Stilwater", SteamPlay.IsSetUp() ? "Set up: Steam's Play opens this launcher."
+                                                                  : "Steam's Play starts the game without Stilwater.", steam);
+
         AddSection("Controls");
         AddRow("Layout", "Controller and keyboard/mouse. Close the game first.", _controller);
 
@@ -129,6 +139,26 @@ internal sealed class SettingsPage : UserControl
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException or InvalidOperationException
                                       or InvalidDataException or KeyNotFoundException)
+        {
+            ShowStatus(e.Message, Theme.Bad);
+        }
+    }
+
+    private void SetUpSteam()
+    {
+        if (SteamPlay.SteamRunning)
+        {
+            Clipboard.SetText(SteamPlay.LaunchOptions);
+            ShowStatus("Copied. In Steam: Saints Row 2 → Properties → Launch Options, paste. (Or close Steam and press Set up.)", Theme.Muted);
+            return;
+        }
+        try
+        {
+            var accounts = SteamPlay.SetUp();
+            ShowStatus(accounts > 0 ? "Done: Steam's Play button now opens Stilwater." : "Play Saints Row 2 from Steam once, then try again.",
+                       accounts > 0 ? Theme.Muted : Theme.Bad);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or InvalidOperationException)
         {
             ShowStatus(e.Message, Theme.Bad);
         }

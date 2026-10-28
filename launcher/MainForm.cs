@@ -6,6 +6,9 @@ public sealed class MainForm : Form
 {
     private readonly GameInstall? _game = GameInstall.FindSteamInstall();
     private readonly Panel _host = new() { Dock = DockStyle.Fill };
+    private readonly Panel _banner = new() { Dock = DockStyle.Top, Height = 44, BackColor = Theme.Accent, Visible = false, Padding = new Padding(28, 0, 28, 0) };
+    private readonly Label _bannerText = new() { Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft, ForeColor = Color.White, Font = Theme.Strong };
+    private readonly Online _online;
     private readonly List<(Label Tab, Func<Control> Create)> _tabs = [];
     private int _active = -1;
     private Control? _page;
@@ -19,6 +22,11 @@ public sealed class MainForm : Form
         ClientSize = new Size(720, 640);
         MinimumSize = new Size(620, 520);
         StartPosition = FormStartPosition.CenterScreen;
+        // Created now that the form exists, so its events arrive on the UI thread.
+        Updater.CleanUp();
+        Online.Game = _game;
+        _online = new Online();
+        _online.Invited += ShowInvite;
 
         var header = new Panel { Dock = DockStyle.Top, Height = 64, Padding = new Padding(28, 0, 28, 0) };
         header.Paint += (_, e) =>
@@ -50,15 +58,53 @@ public sealed class MainForm : Form
         brand.Controls.Add(maker);
 
         var nav = new FlowLayoutPanel { Dock = DockStyle.Right, AutoSize = true, WrapContents = false, Padding = new Padding(0, 22, 0, 0) };
-        AddTab(nav, "Play", () => new HomePage(_game));
+        AddTab(nav, "Play", () => new HomePage(_game, _online));
+        AddTab(nav, "Friends", () => new FriendsPage(_online));
+        AddTab(nav, "Mods", () => _game is null
+            ? new Label { Text = "Saints Row 2 was not found.", ForeColor = Theme.Bad, Padding = new Padding(28) }
+            : new ModsPage(_game));
         AddTab(nav, "Settings", () => _game is null
             ? new Label { Text = "Saints Row 2 was not found.", ForeColor = Theme.Bad, Padding = new Padding(28) }
             : new SettingsPage(_game));
 
         header.Controls.AddRange([brand, nav]);
-        Controls.AddRange([_host, header]);
+
+        var join = new Button
+        {
+            Text = "Play", Dock = DockStyle.Right, Width = 90, FlatStyle = FlatStyle.Flat, BackColor = Color.White,
+            ForeColor = Theme.Accent, Font = Theme.Strong, FlatAppearance = { BorderSize = 0 }, Cursor = Cursors.Hand,
+        };
+        join.Click += (_, _) => { _banner.Visible = false; ShowPage(0); };
+        _banner.Controls.AddRange([_bannerText, join]);
+        Controls.AddRange([_host, _banner, header]);
         SetIcon();
         ShowPage(Math.Clamp(startPage, 0, _tabs.Count - 1));
+        _ = SignInSavedAsync();
+    }
+
+    public const int SettingsTab = 3;
+
+    /// <summary>Signs in with the login the game keeps, when there is one and the game isn't
+    /// already signed in with it.</summary>
+    private async Task SignInSavedAsync()
+    {
+        if (GameLogin.Read() is not { IsComplete: true } login || GameInstall.IsRunning()) return;
+        try { await _online.SignInAsync(login); }
+        catch (Exception e) when (e is InvalidOperationException or IOException or System.Net.Sockets.SocketException or TimeoutException) { }
+    }
+
+    private void ShowInvite(Online.Friend friend)
+    {
+        _bannerText.Text = $"{friend.Name} invited you to co-op. Start the game, then join them from Co-op → Online.";
+        _banner.Visible = true;
+        if (WindowState == FormWindowState.Minimized) WindowState = FormWindowState.Normal;
+        Activate();
+    }
+
+    protected override void OnFormClosed(FormClosedEventArgs e)
+    {
+        _online.Dispose();
+        base.OnFormClosed(e);
     }
 
     private void AddTab(FlowLayoutPanel nav, string text, Func<Control> create)

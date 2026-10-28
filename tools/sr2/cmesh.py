@@ -25,8 +25,10 @@ def _find_vertex_info(header, data_size):
 
 
 def _find_strips(header, index_count):
-    """[(start, count)] from the header's (0, count), (0, end) pairs that add up to index_count."""
+    """[(start, count)] from the header's (0, count), (0, end) pairs: the longest table that fits in
+    index_count (some meshes keep a second, smaller index set after the first)."""
     u = struct.unpack_from(f"<{len(header) // 4}I", header)
+    best = None
     for k in range(len(u) - 4):
         if u[k] or u[k + 2] or not u[k + 1] or u[k + 1] != u[k + 3]:
             continue
@@ -37,13 +39,29 @@ def _find_strips(header, index_count):
             strips.append((end, u[j + 1]))
             end = u[j + 3]
             j += 4
-        if end == index_count:
-            return strips
-    raise ValueError("strip table not found")
+        if 0 < end <= index_count and (best is None or end > best[-1][0] + best[-1][1]):
+            best = strips
+    if best is None:
+        raise ValueError("strip table not found")
+    return best
+
+
+def _part_triangles(header, data, stride, count):
+    """Triangles from a car-style part record (0x00010000, index count, -1, -1, 0, format, vertices)
+    and its submesh table, which some meshes (shoes) use instead of the strip pairs."""
+    import car
+    for part in car.find_parts(header):
+        if part["stride"] == stride and part["verts"] == count:
+            index_at = (stride * count + 15) // 16 * 16
+            indices = np.frombuffer(data[index_at:index_at + 2 * part["indices"]], dtype="<u2")
+            subs = part["submeshes"] or [dict(start=0, count=part["indices"], material=0)]
+            return [(car.strip_triangles(indices[s["start"]:s["start"] + s["count"]]), s["material"]) for s in subs]
+    return None
 
 
 def load(header_path, data_path):
-    """dict(positions (N,3), normals (N,3), uvs (N,2), triangles (M,3))."""
+    """dict(positions (N,3), normals (N,3), uvs (N,2), triangles (M,3), materials (M,)), plus the
+    raw vertex bytes ("raw") and their stride."""
     header = open(header_path, "rb").read()
     data = open(data_path, "rb").read()
     stride, count, _ = _find_vertex_info(header, len(data))
@@ -55,27 +73,32 @@ def load(header_path, data_path):
     st = np.frombuffer(raw[:, 28:32].tobytes(), dtype="<i2").reshape(count, 2).astype(float)
     uvs = np.stack([st[:, 0] / 1024.0, 1.0 + st[:, 1] / 1024.0], axis=1)
 
-    index_at = (stride * count + 15) // 16 * 16
-    strips = None
-    for index_count in range((len(data) - index_at) // 2, (len(data) - index_at) // 2 - 8, -1):
-        try:
-            strips = _find_strips(header, index_count)
-            break
-        except ValueError:
-            continue
-    if strips is None:
-        raise ValueError("strip table not found")
-    indices = np.frombuffer(data[index_at:index_at + 2 * index_count], dtype="<u2")
-
-    triangles = []
-    for start, n in strips:
-        s = indices[start:start + n]
-        for i in range(n - 2):
-            a, b, c = int(s[i]), int(s[i + 1]), int(s[i + 2])
-            if a == b or b == c or a == c:
-                continue
-            triangles.append((a, b, c) if i % 2 == 0 else (b, a, c))
-    return dict(positions=positions, normals=normals, uvs=uvs, triangles=np.array(triangles))
+    # Two ways the header lists the draws (strip pairs, or a car-style part with submeshes); use
+    # whichever covers more of the mesh.
+    by_part = _part_triangles(header, data, stride, count)
+    triangles = None
+    try:
+        index_at = (stride * count + 15) // 16 * 16
+        strips = _find_strips(header, (len(data) - index_at) // 2)
+        indices = np.frombuffer(data[index_at:index_at + 2 * (strips[-1][0] + strips[-1][1])], dtype="<u2")
+        triangles = []
+        for start, n in strips:
+            s = indices[start:start + n]
+            for i in range(n - 2):
+                a, b, c = int(s[i]), int(s[i + 1]), int(s[i + 2])
+                if a == b or b == c or a == c:
+                    continue
+                triangles.append((a, b, c) if i % 2 == 0 else (b, a, c))
+        triangles = np.array(triangles)
+        materials = np.zeros(len(triangles), dtype=int)
+    except ValueError:
+        if by_part is None:
+            raise
+    if by_part is not None and (triangles is None or sum(len(t) for t, _ in by_part) > len(triangles)):
+        triangles = np.vstack([t for t, _ in by_part])
+        materials = np.concatenate([np.full(len(t), m) for t, m in by_part])
+    return dict(positions=positions, normals=normals, uvs=uvs, triangles=triangles, materials=materials,
+                raw=raw, stride=stride)
 
 
 def bake(mesh, width, height):

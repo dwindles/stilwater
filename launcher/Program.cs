@@ -9,10 +9,23 @@ internal static class Program
         // The outcome is written to logs\launcher.log.
         if (args.Contains("--play", StringComparer.OrdinalIgnoreCase))
             return PlayHeadless();
+        // --setup-steam makes Steam's Play button open this launcher (the installer runs it with Steam
+        // closed). Exit code: Steam accounts set up, or -1 when Steam is running or the files can't be written.
+        if (args.Contains("--setup-steam", StringComparer.OrdinalIgnoreCase))
+        {
+            try { return SteamPlay.SetUp(); }
+            catch (Exception e) when (e is InvalidOperationException or IOException or UnauthorizedAccessException) { return -1; }
+        }
 
         ApplicationConfiguration.Initialize();
-        // --settings opens straight onto the Settings page.
-        Application.Run(new MainForm(args.Contains("--settings", StringComparer.OrdinalIgnoreCase) ? 1 : 0));
+        // --page play|friends|mods|settings (or --settings) opens straight onto that page. Steam's Play
+        // button (launch options "launcher" %command%) passes the game's own command line, which the
+        // launcher doesn't need.
+        var page = args.Contains("--settings", StringComparer.OrdinalIgnoreCase) ? MainForm.SettingsTab : 0;
+        var at = Array.FindIndex(args, a => a.Equals("--page", StringComparison.OrdinalIgnoreCase));
+        if (at >= 0 && at + 1 < args.Length)
+            page = Math.Max(0, Array.IndexOf(["play", "friends", "mods", "settings"], args[at + 1].ToLowerInvariant()));
+        Application.Run(new MainForm(page));
         return 0;
     }
 

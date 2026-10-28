@@ -1,5 +1,6 @@
 # Builds core (DFEngine.dll), the runtime (32-bit C++) and the launcher (.NET 8) into .\dist
-param([ValidateSet("Release", "Debug")] [string] $Configuration = "Release")
+# -Version sets the launcher's version (tools\release.ps1 passes the release's).
+param([ValidateSet("Release", "Debug")] [string] $Configuration = "Release", [string] $Version = "")
 $ErrorActionPreference = "Stop"
 $root = $PSScriptRoot
 $dist = Join-Path $root "dist"
@@ -17,7 +18,11 @@ if ($LASTEXITCODE) { throw "CMake configure failed" }
 cmake --build "$root\runtime\build" --config $Configuration
 if ($LASTEXITCODE) { throw "Runtime build failed" }
 
-dotnet publish "$root\launcher\Stilwater.Launcher.csproj" -c $Configuration -o $dist --nologo
+# The launcher publishes as one self-contained exe; drop files an older framework-dependent build left.
+Remove-Item "$dist\StilwaterLauncher.*" -ErrorAction SilentlyContinue
+$versionArgs = @()
+if ($Version) { $versionArgs += "-p:Version=$Version" }
+dotnet publish "$root\launcher\Stilwater.Launcher.csproj" -c $Configuration -o $dist --nologo @versionArgs
 if ($LASTEXITCODE) { throw "Launcher build failed" }
 
 Copy-Item "$root\runtime\build\$Configuration\stilwater.dll", "$root\runtime\build\$Configuration\stilwater-loader.exe" $dist -Force

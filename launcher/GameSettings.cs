@@ -18,6 +18,11 @@ internal static class GameSettings
         new("Stilwater", "Shadow distance", "Meters. Vanilla 125, max 255, 0 keeps vanilla.",
             "Stilwater", "ShadowDistance", SettingKind.Number, "255", 0, 255, 5),
 
+        new("Co-op", "Open router ports", "Forwards the game's ports through UPnP while it runs, so friends can join you.",
+            "Stilwater", "UPnP", SettingKind.Toggle, "1"),
+        new("Co-op", "Online server", "Stilwater Online's address. Type openspy to use OpenSpy. Friends need the same one.",
+            "Stilwater", "OnlineServer", SettingKind.Text, Online.DefaultServer),
+
         new("Graphics", "Borderless window", "",
             "Graphics", "Borderless", SettingKind.Toggle, "1"),
         new("Graphics", "Clearer lighting", "Removes the orange-yellow filter (VanillaFX+).",

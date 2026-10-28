@@ -31,9 +31,43 @@ Location: `%LOCALAPPDATA%\THQ\Saints Row 2\settings.dat`. Steam Cloud does not s
 | Offset | Size | Contents |
 |---|---|---|
 | 0x00 | 0x54 | Display record. Width u32 at +0x3C, height at +0x40, u32 at +0x44 (default 2), fullscreen u8 at +0x48, flags from +0x49. |
-| 0x54 | 4 × 0x40 | Multiplayer name and login strings. Each is XORed with `rand()` output after `srand(0xADF0 + i)`, so treat the file as sensitive. |
+| 0x54 | 4 × 0x40 | Online login, in this order: password, nick, email, LAN name (`0x212ABC8`, `0x212AB48`, `0x212AC08`, `0x212AB08`). Each is XORed with the low byte of successive MSVC `rand()` values after `srand(0xADF0 + i)` (`0x00696F20`), so treat the file as sensitive. |
 
 `profile.dat` holds a copy of the same 0x54-byte display record at offset 0x6DA.
+
+With all three login strings set, the Co-op → Online menu signs in by itself (`0x008EABB0` → `gpiConnect` at `0x008F1480`). The launcher's Friends page writes them (`launcher/GameLogin.cs`).
+
+## Online (OpenSpy / GameSpy Presence)
+
+The core points GameSpy's hosts at OpenSpy (`Patches/OpenSpy.cpp`), or at Stilwater Online (`Stilwater/OnlineServer.cpp`). SR2's GameSpy identity, from the GP connection set up at `0x008EDCC0` and the login message built at `0x008F1990`:
+
+| Field | Value |
+|---|---|
+| Game name | `srow2pc` (`0x00DD0DAC`) |
+| Product id | 11405 (connection +0x60C) |
+| Namespace id | 1 (+0x610) |
+| Partner id | 0 (+0x1A4) |
+| SDK revision | 11 |
+
+Login is by `nick@email` (no unique nick). `launcher/Online.cs` speaks the same protocol for the friends list and invites.
+
+Hostnames the game uses (all rewritten to `openspy.net` by `Patches/OpenSpy.cpp`): `%s.available`, `%s.master`, `%s.ms%d` (server browser), `natneg1`-`3`, `gpcm`, `gpsp`, `motd` (HTTP), and the HTTP services `%s.auth.pubsvs` (AuthService, login certificates), `%s.sake` (storage) and `%s.comp.pubsvs` (competition). It resolves them with WSOCK32 `gethostbyname` (ordinal 52, IAT slot `0x00DB8338`); `Stilwater/OnlineServer.cpp` hooks that slot to send every `*.openspy.net` / `*.gamespy.com` lookup to `[Stilwater] OnlineServer`. Stilwater Online (`server/`) doesn't serve the HTTP services yet; co-op isn't known to need them.
+
+Server browser (SB v2), from the game's parser:
+
+- Secret key `odvimE`, built on the stack before both `ServerBrowserNew` calls (`0x008D0180`, `0x00811C30`). `ServerBrowserNew` is `0x008E59B0`; it copies the game name to +0xC and +0x30 and the key to +0x54.
+- Crypt header (`0x008E7EB0`): byte 0 = n XOR 0xEC, then n bytes whose first two are backend flags (read at +1, byte-swapped, kept at +0x7D0; 0x80 = query challenge), then a byte = m XOR 0xEA and m bytes of server challenge. Key mix `0x008E78B0`: `key[(secret[i % len] * i) & 7] ^= key[i & 7] ^ server[i]` over the 8-byte client challenge, then GOACryptInit (Sapphire II) on those 8 bytes.
+- List body: client IP (4), default query port (2, 0xFFFF = an error string follows), key count, per key type (0 string, 1 byte, 2 short) and name, popular-value count and strings, then entries until `00 FF FF FF FF`.
+- Entry (`0x008E7D00`): flags, IP (4); 0x10 port (2), 0x02 private IP (4), 0x20 private port (2), 0x08 ICMP IP (4); 0x40 values (strings as 0xFF + text or a popular index, checked by `0x008E79C0`), 0x80 full rules. 0x01 = takes unsolicited UDP, 0x04 = connect through NAT negotiation.
+- NAT negotiation magic `FD FC 1E 66 6A B2` at `0x00DD0DB4`.
+
+## Audio (XACT banks)
+
+`audio.vpp_pc` holds XACT 3 banks (`.xsb` sound banks, `.xwb` wave banks, version 44) without cue names. `foley.xtbl` names each sound and its bank (`<AudioBanks>`); a sound's cue index is its position among that bank's entries in `foley.xtbl` (Weapons: 146 entries, 76 simple + 70 complex cues). For example `MAC10_FIRE_PLAYER` is Weapons cue 25, a looping play of wave 148, and `MAC10_DRY` (cue 26) is wave 149. Automatic weapons loop their fire cue while the trigger is held and play the release cue after it. `tools/sr2/xwb.py` replaces waves with PCM; a loose `Weapons.xwb` is used by mods/glock-switch (not yet confirmed to load).
+
+## Item meshes (`.smesh_pc`)
+
+Weapons and item props such as the phone share one layout (`tools/sr2/weaponport.py`). After each detail level's part record the header holds a positions-only shadow mesh: strip length at record +0x28, vertex count at +0x3C (12-byte positions), positions from the 16-byte boundary after record +0x48, then the strip from the next boundary. The game casts the item's shadows (onto itself too) from it, so a replaced model needs it replaced.
 
 ## Draw distance
 
@@ -70,6 +104,29 @@ Observed limit: the Civic with `.car_pc` + `.g_car_pc` = 4,138,316 bytes spawned
 | `0x00B40B60` | Sounds the horn: car object +0x84E4 → vehicle entry, entry +0x540 → horn index → table entry +4 → sound. Read every time, so a change takes effect at once. |
 
 Car objects: `*(0x02149C64 + (handle & 0xFFF) * 16)`, handle at object +0x44; the player's vehicle handle is at player +0xD74.
+
+## Strings
+
+The key of a `.le_strings` entry is the game's string hash of the key name (e.g. `CUST_ITEM_HOODY`): CRC-32 of the lower-cased name starting from 0 with no final inversion (table `0x00E843B8`, `0x00BDCB30`); `tools/sr2/strings.py` `key_hash`.
+
+## Lights (towards underglow)
+
+Cutscene lightsets (`*-Lightset.xtbl` in `common.vpp_pc`; one in SS01-02 is a green light under Mr. Sunshine's car named `SUSH_Underglow`) are parsed by `0x004C8B80` into up to 128 sets at `0x02652198` (16 bytes each: id, records, count, ...; count `0x02526D44`). Each set holds 0x50-byte entries whose lights are 0x90-byte records:
+
+| Offset | Field |
+|---|---|
+| +0x00 | name |
+| +0x08 | u16 type: 0 omni, 2 circular spotlight |
+| +0x0C | colour (3 floats); +0x18 multiplier; +0x1C colour × multiplier |
+| +0x28 | flags: 0x4000, 0x100 LightLevel, 0x200 LightCharacter, 0x400 ShadowLevel, 0x800 ShadowCharacter |
+| +0x2C | position (and a copy at +0x38) |
+| +0x5C | direction (from the orientation) |
+| +0x68, +0x70 | hotspot, attenuation (start, end) |
+| +0x78 | slate name hash |
+| +0x80, +0x84, +0x88 | objects the light is attached to (array, capacity, count; filled by cutscene code around `0x006C0F40`) |
+| +0x8C | handle collected by `0x004C8A40` (the lights attached to a given object, up to 16) |
+
+`Vehicle-Customization-Lightset.xtbl` is loaded at `0x007B9396`. The vehicle "light" managers (`vehicle_sirenlight_manager` vtable `0x00E467C4`, headlight `0x00E4664C`, brakelight `0x00E466B4`, base `0x00E465F4`) drive glares (`glares.xtbl` coronas such as `SR SirenBlue 01`, name table at `0x00E877C0`), which don't light the ground. Not found yet: the function that turns a light record into a dynamic light.
 
 ## SR2 Reloaded (`RLEngine.dll` / `reloaded.ini`) options worth porting
 

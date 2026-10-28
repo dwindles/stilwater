@@ -45,7 +45,7 @@ NFS_WHEELS = dict(front_x=1.602, rear_x=-1.151, height=0.18, track=0.76)
 # The SR2 car's wheel centres (x, y, z), front left/right then rear left/right.
 SR2_WHEELS = [(-0.741, -0.316, 1.29), (0.741, -0.316, 1.29), (-0.74, -0.316, -1.30), (0.741, -0.316, -1.30)]
 # NFS metres to SR2 units: SR2's cars run larger than life (the Voxel is 4.66 m long).
-SCALE = 1.05
+SCALE = 1.10
 # The SR2 car's seats (and the feet positions that go with them) move down by this much, so the
 # occupants' heads clear the NFS car's lower roof.
 SEAT_DROP = 0.05

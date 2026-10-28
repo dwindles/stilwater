@@ -7,7 +7,7 @@
 -- respect change, while aiming, sprinting, hurt or wanted, and while the weapon
 -- wheel is open.
 --
--- The minimap is square (build.py fills in its round mask texture): the round
+-- The minimap is a slightly wide rectangle (build.py redraws its round mask texture): the round
 -- frame and the notoriety arcs are hidden, and the notoriety icons sit in a row
 -- above the map (police) and below it (gangs).
 --
@@ -57,21 +57,23 @@ function stilwater_hud_square_map()
 		vint_set_property(vint_object_find(name), "alpha", 0)
 	end
 
-	-- The map square is the (centred) mask bitmap behind it: 140 px times its scale.
+	-- The map's rectangle is the (centred) mask bitmap behind it, scaled: %MASK_SIZE% px wide and
+	-- %MAP_HEIGHT% tall (build.py fills these in).
 	local bg_h = vint_object_find("bg_map")
 	local cx, cy = vint_get_property(bg_h, "anchor")
 	local sx = vint_get_property(bg_h, "scale")
-	local half = 70 * sx
+	local half = %MASK_SIZE% / 2 * sx
+	local half_h = %MAP_HEIGHT% / 2 * sx
 	local k = Stilwater_hud.icon_scale
 	local step = 44 * k + 2
 	for i = 1, 5 do
 		-- level 1 on the left, rows right-aligned to the map's edge
 		local x = cx + half - step * (5 - i) - step * 0.5
 		local police_h = vint_object_find("police_noto_icon_" .. i)
-		vint_set_property(police_h, "anchor", x, cy - half - step * 0.5 - 2)
+		vint_set_property(police_h, "anchor", x, cy - half_h - step * 0.5 - 2)
 		vint_set_property(police_h, "scale", k, k)
 		local gang_h = vint_object_find("gang_noto_icon_" .. i)
-		vint_set_property(gang_h, "anchor", x, cy + half + step * 0.5 + 2)
+		vint_set_property(gang_h, "anchor", x, cy + half_h + step * 0.5 + 2)
 		vint_set_property(gang_h, "scale", k, k)
 	end
 end

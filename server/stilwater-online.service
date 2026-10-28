@@ -1,0 +1,23 @@
+[Unit]
+Description=Stilwater Online (Saints Row 2 co-op services)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=stilwater
+Group=stilwater
+WorkingDirectory=/opt/stilwater-online
+# Optional: STILWATER_DISCORD_WEBHOOK=<webhook URL> posts events to Discord (server/notify.py).
+EnvironmentFile=-/etc/stilwater-online/discord.env
+ExecStart=/usr/bin/python3 /opt/stilwater-online/main.py --data /var/lib/stilwater-online
+Restart=always
+RestartSec=3
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/stilwater-online
+MemoryMax=128M
+
+[Install]
+WantedBy=multi-user.target

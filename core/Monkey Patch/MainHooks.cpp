@@ -19,6 +19,8 @@ import component;
 #include "Mem/Memory.h"
 #include "Stilwater/Trainer.h"
 #include "Stilwater/FirstPerson.h"
+#include "Stilwater/CoopPorts.h"
+#include "Stilwater/OnlineServer.h"
 #if RELOADED
 #include "UGC/thaRow/Reloaded.h"
 #include "UGC/thaRow/packfile.h"
@@ -1672,6 +1674,7 @@ int WINAPI Hook_WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCm
 	// Probably Add SR2 Reloaded patch routines here, used to be OS and FPS patch from Monkey here.
 
 	PatchOpenSpy();
+	OnlineServer::Init();
 	patch_metrics();
 
 	//if (GameConfig::GetValue("Debug", "PatchGameLoop", 1)) //THIS IS REQUIRED FOR RICH PRESENCE AND ERROR HANDLER
@@ -1726,6 +1729,7 @@ int WINAPI Hook_WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCm
 	Trainer::Init();
 	FirstPerson::Init();
 #endif
+	CoopPorts::Init();
 
 #if RELOADED
 	Reloaded::Init();

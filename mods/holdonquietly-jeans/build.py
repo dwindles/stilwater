@@ -2,7 +2,7 @@
 
 Pulls the original cmbot_mjeansmf02_m texture pack from the game's archives, swaps its diffuse
 for the projected photo texture (DXT1 at the original's size and mip count) and writes a loose-file
-mod folder.
+mod folder, then slims the mesh to a straight stretch fit (fit.py).
 In game the item is "Men's Jeans 1" (internally "men's tight jeans"); mods/shared renames it,
 sells it in more stores and makes white its default colour.
 
@@ -18,6 +18,7 @@ sys.path.insert(0, str(HERE.parent.parent / "tools" / "sr2"))
 import peg  # noqa: E402
 import vpp  # noqa: E402
 import project  # noqa: E402
+import fit  # noqa: E402
 
 PACK = "cmbot_mjeansmf02_m"
 DIFFUSE = "cmbot_mjeansmf01_d.tga"
@@ -50,7 +51,7 @@ def main(game):
     entry = next(e for e in peg.read_header(out / f"{PACK}.peg_pc") if e["name"] == DIFFUSE)
     peg.to_image(entry, data).save(project.OUT / "readback.png")
     print(f"built {out} ({len(data)} bytes of texture data, {mips} mip levels)")
-
+    fit.main(game)
 
 
 if __name__ == "__main__":
