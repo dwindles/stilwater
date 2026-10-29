@@ -20,9 +20,9 @@ internal static class ControllerLayouts
     private const int A = 0, B = 1, X = 2, Y = 3, LB = 4, RB = 5, L3 = 8, R3 = 9, LT = 10, RT = 11;
     private const int DpadRight = 16, DpadLeft = 18;
 
-    private const int KeyQ = 0x10, KeyE = 0x12, KeyF = 0x21, KeyG = 0x22, KeyX = 0x2D, KeyC = 0x2E, KeyM = 0x32;
+    private const int KeyQ = 0x10, KeyE = 0x12, KeyT = 0x14, KeyY = 0x15, KeyF = 0x21, KeyG = 0x22, KeyX = 0x2D, KeyC = 0x2E, KeyM = 0x32;
     private const int KeyTab = 0x0F, KeyLCtrl = 0x1D, KeyComma = 0x33, KeyPeriod = 0x34, Numpad8 = 0x48, Numpad5 = 0x4C;
-    private const int MouseLeft = 256, MouseRight = 257;
+    private const int MouseLeft = 256, MouseRight = 257, Unbound = -1;
 
     // PC_BTN_* action id -> pad button. Mirrors tools/controls/gta_layout.py.
     private static readonly Dictionary<int, int> GtaOnlinePad = new()
@@ -36,7 +36,7 @@ internal static class ControllerLayouts
     private static readonly Dictionary<int, int> GtaOnlineKeyboard = new()
     {
         [35] = MouseLeft, [16] = MouseRight, [36] = KeyQ, [4] = KeyF, [6] = KeyTab, [15] = KeyLCtrl, [17] = KeyG,
-        [20] = KeyM, [26] = KeyE, [49] = KeyC, [27] = KeyX, [29] = KeyComma, [30] = KeyPeriod, [64] = Numpad8, [65] = Numpad5,
+        [20] = KeyM, [31] = Unbound, [32] = Unbound, [84] = KeyT, [85] = KeyY, [26] = KeyE, [49] = KeyC, [27] = KeyX, [29] = KeyComma, [30] = KeyPeriod, [64] = Numpad8, [65] = Numpad5,
     };
 
     public static string InputBin =>

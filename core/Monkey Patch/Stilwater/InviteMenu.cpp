@@ -60,9 +60,10 @@ namespace InviteMenu
 		struct Note { std::string title, text; DWORD at = 0; };
 		struct Row { std::string label, value; uint32_t dot = 0; bool adjustable = false, dim = false; };
 
-		unsigned char g_key = VK_INSERT;
+		unsigned char g_key = VK_INSERT, g_altKey = 0;
 		bool g_open = false;
 		int g_tab = 0, g_selected = 0;              // tab 0 friends, 1 trainer, 2 the game's cheats
+		int g_first = 0;                            // the top row shown; the wheel moves it, not the selection
 
 		// Shared with the pipe thread and the Present hook.
 		std::mutex g_lock;
@@ -346,7 +347,7 @@ namespace InviteMenu
 			l.header = 46 * l.s;
 			l.rowH = 33 * l.s;
 			const int count = (int)g_rows.size();
-			l.first = std::clamp(g_selected - VisibleRows + 1, 0, std::max(0, count - VisibleRows));
+			l.first = g_first = std::clamp(g_first, 0, std::max(0, count - VisibleRows));
 			l.shown = std::min(count - l.first, VisibleRows);
 			l.h = l.header + 12 * l.s + std::max(l.shown, 1) * l.rowH + 40 * l.s;
 			const float width = (float)std::max(Overlay::Width(), 640), height = (float)std::max(Overlay::Height(), 480);
@@ -370,10 +371,18 @@ namespace InviteMenu
 				: "player_controls_disable(LOCAL_PLAYER or \"#PLAYER1#\")");
 		}
 
+		// Scrolls just enough to show the selected row (after the arrow keys move it).
+		void ShowSelected()
+		{
+			if (g_selected < g_first) g_first = g_selected;
+			if (g_selected >= g_first + VisibleRows) g_first = g_selected - VisibleRows + 1;
+		}
+
 		void Open()
 		{
 			g_open = true;
 			g_selected = 0;
+			g_first = 0;
 			g_mouseX = 0;
 			g_mouseY = 0;
 			g_wheel = 0;
@@ -397,6 +406,7 @@ namespace InviteMenu
 			if (tab == g_tab) return;
 			g_tab = tab;
 			g_selected = 0;
+			g_first = 0;
 			if (g_tab == 1) Trainer::Opened();
 			MakeRows();
 		}
@@ -431,8 +441,13 @@ namespace InviteMenu
 				}
 				return;
 			}
-			if (wheel && count > 0)
-				g_selected = std::clamp(g_selected + (wheel > 0 ? -1 : 1), 0, count - 1);
+			if (wheel && count > VisibleRows) {
+				// One row per notch (120 a notch, or 1 on some mice); the row under the cursor stays selected.
+				const int notches = std::max(1, std::abs(wheel) / 120);
+				g_first = std::clamp(g_first + (wheel > 0 ? -notches : notches), 0, count - VisibleRows);
+				std::lock_guard lock(g_lock);
+				l = MakeLayout();
+			}
 
 			const bool inPanel = g_cursorX >= l.x && g_cursorX < l.x + l.w && g_cursorY >= l.y && g_cursorY < l.y + l.h;
 			if (!inPanel) return;
@@ -450,7 +465,7 @@ namespace InviteMenu
 			}
 			const int row = (int)std::floor((g_cursorY - l.listTop) / l.rowH);
 			if (row < 0 || row >= l.shown) return;
-			if (dx || dy || clicked) g_selected = l.first + row;
+			if (dx || dy || wheel || clicked) g_selected = l.first + row;
 			if (!clicked) return;
 			const bool adjustable = g_tab == 1 && Trainer::CanAdjust(g_selected);
 			if (adjustable && g_cursorX >= l.x + l.w * 0.55f)
@@ -559,6 +574,8 @@ namespace InviteMenu
 	{
 		g_key = (unsigned char)GameConfig::GetValue("Stilwater", "MenuKey", VK_INSERT,
 			"Key that opens the Stilwater menu (friends, invites, trainer), as a Windows virtual-key code (0x2D = Insert).");
+		g_altKey = (unsigned char)GameConfig::GetValue("Stilwater", "MenuKey2", 0,
+			"Another key that opens it, as a virtual-key code (0 for none; M opens the map).");
 		g_panelX = (int)GameConfig::GetValue("Stilwater", "MenuX", 80, "Where the Stilwater menu sits (drag its title bar to move it).");
 		g_panelY = (int)GameConfig::GetValue("Stilwater", "MenuY", 120);
 		HookMouse();
@@ -571,7 +588,7 @@ namespace InviteMenu
 		if (!InGame()) {
 			if (g_open) Close();
 		}
-		else if (IsKeyPressed(g_key, false))
+		else if (IsKeyPressed(g_key, false) || (g_altKey && IsKeyPressed(g_altKey, false)))
 			g_open ? Close() : Open();
 
 		if (g_open) {
@@ -590,6 +607,7 @@ namespace InviteMenu
 				if (IsKeyPressed(VK_UP, false)) g_selected = (g_selected + count - 1) % count;
 				if (IsKeyPressed(VK_DOWN, false)) g_selected = (g_selected + 1) % count;
 				g_selected = std::min(g_selected, count - 1);
+				ShowSelected();
 				if (adjustable && IsKeyPressed(VK_LEFT, false)) Trainer::Adjust(g_selected, -1);
 				if (adjustable && IsKeyPressed(VK_RIGHT, false)) Trainer::Adjust(g_selected, 1);
 				if (IsKeyPressed(VK_RETURN, false)) Activate();

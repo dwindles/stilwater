@@ -19,6 +19,7 @@ import component;
 #include "Mem/Memory.h"
 #include "Stilwater/Trainer.h"
 #include "Stilwater/CheatFlag.h"
+#include "Stilwater/ClothingTable.h"
 #include "Stilwater/InviteMenu.h"
 #include "Stilwater/FirstPerson.h"
 #include "Stilwater/CoopPorts.h"
@@ -1713,6 +1714,7 @@ int WINAPI Hook_WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCm
 #endif
 	CoopPorts::Init();
 	CheatFlag::Init();
+	ClothingTable::Init();
 
 #if RELOADED
 	Reloaded::Init();

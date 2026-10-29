@@ -81,21 +81,21 @@ def sample(spec, photo, u, tv, panels):
                      borderMode=cv2.BORDER_REFLECT)
 
 
-def main():
-    OUT.mkdir(exist_ok=True)
-    photos = {k: np.asarray(Image.open(s["file"]).convert("RGB")) for k, s in PHOTOS.items()}
+def bake(specs):
+    """The diffuse (SIZE x SIZE RGB array) from front and back photo specs like PHOTOS."""
+    photos = {k: np.asarray(Image.open(s["file"]).convert("RGB")) for k, s in specs.items()}
     yy, xx = np.mgrid[0:SIZE, 0:SIZE].astype(np.float64)
     u = (xx + 0.5) / SIZE
     tv = np.clip((yy + 0.5) / SIZE, TEX_ROWS[0], TEX_ROWS[-1])
 
     left_half = u < 0.5
     # Front panels: the wearer's right leg is on the photo's left (front view).
-    front = sample(PHOTOS["front"], photos["front"], u, tv, [
+    front = sample(specs["front"], photos["front"], u, tv, [
         (left_half, (u - OUTSEAM_L) / (INSEAM_L - OUTSEAM_L), "L", "GL"),
         (~left_half, (u - INSEAM_R) / (OUTSEAM_R - INSEAM_R), "GR", "R"),
     ]).astype(np.float64)
     # Back panels: seen from behind, the wearer's right leg is on the photo's right.
-    back = sample(PHOTOS["back"], photos["back"], u, tv, [
+    back = sample(specs["back"], photos["back"], u, tv, [
         (left_half, u / OUTSEAM_L, "GR", "R"),
         (~left_half, (u - OUTSEAM_R) / (1 - OUTSEAM_R), "L", "GL"),
     ]).astype(np.float64)
@@ -103,7 +103,12 @@ def main():
     # 1 on the front panels, 0 on the back, cross-faded at the side seams.
     to_front = np.where(left_half, u - OUTSEAM_L, OUTSEAM_R - u)
     w = np.clip((to_front + SEAM_BLEND) / (2 * SEAM_BLEND), 0, 1)[..., None]
-    result = (front * w + back * (1 - w)).clip(0, 255).astype(np.uint8)
+    return (front * w + back * (1 - w)).clip(0, 255).astype(np.uint8)
+
+
+def main():
+    OUT.mkdir(exist_ok=True)
+    result = bake(PHOTOS)
     Image.fromarray(result).save(OUT / "hq_jeans_diffuse_1024.png")
 
     original = Image.open(HERE / "original" / "cmbot_mjeansmf01_d.png").convert("RGB").resize((512, 512))

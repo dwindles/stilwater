@@ -21,12 +21,13 @@ LB, RB, BACK, START, L3, R3, LT, RT = 4, 5, 6, 7, 8, 9, 10, 11
 DPAD_RIGHT, DPAD_UP, DPAD_LEFT, DPAD_DOWN = 16, 17, 18, 19
 
 # Keyboard: DirectInput scan codes, plus the mouse buttons.
-KEY_Q, KEY_E, KEY_R, KEY_F, KEY_G = 0x10, 0x12, 0x13, 0x21, 0x22
+KEY_Q, KEY_E, KEY_R, KEY_T, KEY_Y, KEY_F, KEY_G = 0x10, 0x12, 0x13, 0x14, 0x15, 0x21, 0x22
 KEY_X, KEY_C, KEY_M = 0x2D, 0x2E, 0x32
 KEY_TAB, KEY_LCTRL = 0x0F, 0x1D
 KEY_COMMA, KEY_PERIOD = 0x33, 0x34
 KEY_NUMPAD8, KEY_NUMPAD5 = 0x48, 0x4C
 MOUSE_LEFT, MOUSE_RIGHT = 256, 257
+UNBOUND = -1
 
 # PC_BTN_* action id -> pad button. Actions not listed keep their current binding.
 GTA_ONLINE_PAD = {
@@ -70,7 +71,11 @@ GTA_ONLINE_KEYBOARD = {
     6: KEY_TAB,      # RADIAL              weapon wheel (was Q)
     15: KEY_LCTRL,   # CROUCH              stealth (was C)
     17: KEY_G,       # GRAB_HUMAN          human shield (was Ctrl)
-    20: KEY_M,       # MAP                 (was Tab)
+    20: KEY_M,       # MAP                 pause map (was Tab)
+    31: UNBOUND,     # LOOK_RIGHT          (was P; GTA has no look left/right)
+    32: UNBOUND,     # LOOK_LEFT           (was O)
+    84: KEY_T,       # CHAT_ALL            (was Y)
+    85: KEY_Y,       # CHAT_TEAM           (was T)
     # Vehicles
     26: KEY_E,       # HORN                (was H)
     49: KEY_C,       # VEHICLE_LOOK_BEHIND (was X)

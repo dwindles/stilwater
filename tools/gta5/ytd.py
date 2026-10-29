@@ -16,7 +16,7 @@ from PIL import Image
 
 from yft import Resource
 
-FOURCC = {b"DXT1": "DXT1", b"DXT3": "DXT3", b"DXT5": "DXT5", b"ATI1": "BC4", b"ATI2": "BC5", b"BC7\0": "BC7"}
+FOURCC = {b"DXT1": "DXT1", b"DXT3": "DXT3", b"DXT5": "DXT5", b"ATI1": "BC4", b"ATI2": "BC5", b"BC7\0": "BC7", b"BC7 ": "BC7"}
 
 
 def textures(path):
@@ -54,6 +54,14 @@ def to_image(width, height, fmt, buf, off):
         header = struct.pack("<4sIIIIIII44x", b"DDS ", 124, flags, height, width, size, 0, 1)
         header += struct.pack("<II4s20x", 32, 0x4, kind.encode())
         header += struct.pack("<I16x", 0x1000)
+        return Image.open(io.BytesIO(header + buf[off:off + size])).convert("RGBA")
+    if kind == "BC7":
+        size = max(1, (width + 3) // 4) * max(1, (height + 3) // 4) * 16
+        flags = 0x1 | 0x2 | 0x4 | 0x1000 | 0x80000
+        header = struct.pack("<4sIIIIIII44x", b"DDS ", 124, flags, height, width, size, 0, 1)
+        header += struct.pack("<II4s20x", 32, 0x4, b"DX10")
+        header += struct.pack("<I16x", 0x1000)
+        header += struct.pack("<IIIII", 98, 3, 0, 1, 0)   # DXGI_FORMAT_BC7_UNORM, a 2D texture
         return Image.open(io.BytesIO(header + buf[off:off + size])).convert("RGBA")
     if fmt == 21:   # D3DFMT_A8R8G8B8
         return Image.frombytes("RGBA", (width, height), buf[off:off + width * height * 4], "raw", "BGRA")
