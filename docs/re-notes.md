@@ -166,3 +166,53 @@ here, with what their handlers do once the name is resolved:
 - `ExtendedShadowRenderDistance`: 125 → 255.
 
 Juiced Patch has no equivalents. `RLEngine.dll` is native code, so analyze it with REA/Ghidra to find the patch sites.
+
+## Co-op past two players, natively (started 2026-11-02)
+
+| Address | What |
+|---|---|
+| `*(0x0217043C)` | Head of the game's player list (circular: next at +0x1294, script handle at +0x18B0). The engine's own list, from multiplayer (12 players); `player_names_get_all` (0x00A41070) walks it. |
+| `0x00E87CEC` | Script player names `#PLAYER1#` … `#PLAYER12#` (12 entries), copied into the script name table by 0x00A535E0. |
+| `0x021703D4` | Local player (3120 code references, single-player code). `0x0217043C` has 243. |
+| strings | `coop_player cpu/gpu`, `coop_allocators`, `hack_coop_allocators` (memory sized for one remote player), `coop_stress_test_member_*` console commands, `kick_coop_player`, `coop_is_active` (UI script table, refs 0x7F0184 / 0xA4FA52). |
+
+Next: find code that takes "the other player" as `head->next` or a fixed remote pointer instead of walking the list; the co-op allocators (one remote player's memory); the session's player cap (Juiced's commented NetPlayer.cpp patches: 0x007F750D, 0x0086ACF5, 0x007F7522, 0x007F7A31).
+
+### Findings, 2026-11-03
+
+| Address | What |
+|---|---|
+| `0x009D7BD0` | "The partner": first player in the list that isn't the local one, when co-op (`0x02528B49`) is on. About 330 callers. |
+| `0x009D7C10` | Takes a player from the pool of 12 (free list `0x021703D0`, 0x18F0 bytes each), only slots below the lobby cap; `0x021603CC` counts players. |
+| `0x007F7095` / `0x007F71EC` / `0x007F71F2` | Co-op's network setup ("coop-mp") writes 2 to the player cap `0x00E8C434` and lobby cap `0x00E8C438`. Multiplayer writes 12 (`0x007F750D`), system link 12/8 (`0x007F732C`). |
+| `0x0051E4FD` / `0x0051E530` / `0x0051E8A2` | Co-op memory pools for the remote player, fixed offsets in one block: "coop_player cpu" 0x228000, "coop_allocators" 0x5ADBB0, "coop_player gpu" 0x1071000 (pool objects `0x02773F0C`, `0x02773FC0`, `0x02773F68`). |
+| `0x009E9EB0` | Remote players' body/clothing slots (0x58 per player), set up lobby cap − 1 times: already general. |
+
+Stilwater/CoopSize.cpp ([Stilwater] MaxCoopPlayers, default 4) raises the cap and moves the three pools to memory of their own sized for the extra players. Untested with 3 people.
+
+Callers of the partner function looked at so far: `0x007A37E0` minimap blip (one partner), `0x006A2140` cutscene start (records local + partner handles at `0x02527CA0`/`CA4`), `0x005250E0` runs only when exactly two players exist (`0x021603CC == 2`; streaming or camera around the other player, the biggest risk for a third), `0x0084D230` network object update (partner's vehicle), `0x00A3F970` script value at +0xC3C for player and partner.
+`0x005250E0`'s two-player branch: `0x009DFA00` gives a player's camera (local: `0x025F5B14`/`0x025F5B38`; remote: position +0x12A0, rows +0x12AC), and `0x00523EB0` gathers what's in view of the partner's camera (screen size +0x12D0/+0x12D4) through `0x00A01AD0`. Per-player visibility, not world streaming; for more players it would run once per remote player.
+
+### Missions' two participants
+
+A mission (or stronghold, activity) has two participant slots: the owner's handle `0x02527CA0` and the partner's `0x02527CA4`. Starts fill them (`0x0069E080`, `0x006A29B0`, `0x006A70D0`, `0x005B73A0`; owner = whoever started, partner = `0x009D7BD0`), `0x006A1C70` (mission end) clears both, and `0x006A8100` returns the partner's human from `0x02527CA4` (type 1, alive flag +0x3CC). 24 references to `0x02527CA4`; with a third player the mission only knows two of them. `0x0069DEE0` is the "join this mission?" box shown to the partner (MISSION_COOP_CONFIRM_*).
+
+`0x006A1440` (mission start state) copies the partner's position and orientation (+0x14, +0x20 rows) when the local player is the client; the third player would need the same.
+
+Partner callers by subsystem (`D:\tools\sr2-re\partner_callers.csv`, 327 callers, 121 with strings): activities (most of them: demo derby, heli assault, piracy, crowd control, sewage, zombie uprising, fuzz, fight club, hitman, trafficking, vandalism, pimping, racing, insurance fraud, escort, tow, taxi, chop shop), missions (`0x0069DEE0`–`0x006A9F10`), cutscenes (`0x006C44C0`), pause map and taxi (`0x0076F0C0`, `0x00771D20`), confessional (`0x007A8C60`), clothing streaming (`0x00610970`, `0x009E6030`), HUD cancel prompts (`0x004FB4C0`), co-op server messages (`0x008CBA50`), stores (`0x00A6A530`), render (`0x005250E0`).
+
+### Co-op network: already a mesh of peers
+
+The session object is `*(0x02528C14)`; its peers are a circular list at +0x400 (0x22D8 bytes each, next +0x22CC, previous +0x22D0), with +0x404 the host's peer and +0x408 our own. +0x3F8 != 0 means we host (0x0080C920 sets it when hosting, 0x0080C970 / 0x008260C0 clear it when joining); the game also counts 0x02528B56 without 0x02528B2B as a client.
+- `0x00814740` (message, length; session in edi) sends to every peer but ourselves through `0x00814670` (per-peer send, sequence byte at peer +0x16D4 + channel). About 500 game functions call it, so game messages already reach every player. `0x00814620` is the same loop for another send.
+- Message types (table at 0x00E8BF18, 0x18 bytes each: id, handler, name): join_req … join_complete (2–8), new_conn 10 (`0x00816D00`), upd_conn, conn_left, rop_* (replicated objects with owners), migrate / next srv (host migration), nat, voice.
+- `0x0080DEC0` (connection state machine): the host sends join_failed / join_complete (`0x00816740` / `0x008168A0`) to every peer; a client sends to the host. new_conn's handler runs only on clients: it decodes the announced address and, unless it's the host's, connects to it. So clients connect to each other too (a mesh), as in 12-player multiplayer.
+- Names of players come from a sorted pool (`0x00EB7F60`, count `0x00EB7F68`): a new player takes the lowest free #PLAYERn# (+0x18B0), a leaving one gives it back (`0x00A52DA0`). If player 2 leaves, player 3 stays #PLAYER3#.
+- Checks for exactly two players in co-op (`0x021603CC == 2`): `0x0090D110` (limit 3 instead of 6), `0x00929280` (co-op ambient amount), `0x009413A0` (second spawn category), `0x005250E0` (partner's view). CoopSize makes them two or more.
+- `0x0080F9B0` takes a peer out of the list on disconnect, for any number of peers.
+So the transport isn't what limits co-op to two; the caps, memory pools and "the partner" logic above are.
+
+### How scripts name players
+
+ug_lib.lua: `LOCAL_PLAYER = "#PLAYER1#"`, `REMOTE_PLAYER = "#PLAYER2#"` (PLAYER_TAG_LIST goes to 8). 167 scripts use REMOTE_PLAYER about 1,000 times and `coop_is_active` 366 times; none use #PLAYER3#. `0x00A52BB0` (name in ecx) finds a player by walking the player list and comparing the name at player +0x18B0; each player's name comes from the #PLAYER1#…#PLAYER12# table by slot (`0x00A535E0` / `0x00A52DA0`). Natives such as `teleport` (`0x00A47310`) resolve their target through it.
+Plan for 3+: mirror action natives called on "#PLAYER2#" onto #PLAYER3#…#PLAYERn# at the native dispatcher; give queries ("is remote dead/in area") an any/all rule.
