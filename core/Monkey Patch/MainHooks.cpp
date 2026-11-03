@@ -23,6 +23,8 @@ import component;
 #include "Stilwater/InviteMenu.h"
 #include "Stilwater/FirstPerson.h"
 #include "Stilwater/CoopPorts.h"
+#include "Stilwater/ExtraPlayers.h"
+#include "Stilwater/MapIcons.h"
 #include "Stilwater/OnlineServer.h"
 #if RELOADED
 #include "UGC/thaRow/Reloaded.h"
@@ -1317,6 +1319,8 @@ int RenderLoopStuff_Hacked()
 		FirstPerson::Update();
     #endif
 		CheatFlag::Update();
+		ExtraPlayers::Update();
+		MapIcons::Update();
 	if (Render3D::VFXP_fixFog)
 		FogTest();
 
@@ -1712,6 +1716,8 @@ int WINAPI Hook_WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCm
 	InviteMenu::Init();
 	FirstPerson::Init();
 #endif
+	MapIcons::Init();
+	ExtraPlayers::Init();   // before CoopPorts, so its first pass forwards the world port too
 	CoopPorts::Init();
 	CheatFlag::Init();
 	ClothingTable::Init();

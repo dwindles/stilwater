@@ -441,11 +441,12 @@ class Presence:
         session.send(("swjoined", ""), ("profileid", host_id), ("id", request_id))
 
     def cmd_swsetprofile(self, session: Session, fields):
-        """\\swsetprofile\\ with bio and/or avatar (base64 JPEG or PNG; empty removes it)."""
+        """\\swsetprofile\\ with bio, avatar (base64 JPEG or PNG; empty removes it) and/or style
+        (the profile's look, accounts.py STYLE_CHARS)."""
         request_id = fields.get("id", "1")
         try:
             avatar = base64.b64decode(fields["avatar"], validate=True) if "avatar" in fields else None
-            digest = self.accounts.set_profile(session.profile_id, fields.get("bio"), avatar)
+            digest = self.accounts.set_profile(session.profile_id, fields.get("bio"), avatar, fields.get("style"))
         except (binascii.Error, ValueError):
             return session.error(GP_PARSE, "That picture couldn't be read.", False, request_id)
         except AccountError as e:
@@ -469,7 +470,7 @@ class Presence:
         if profile is None:
             return session.error(GP_GETPROFILE_BAD_PROFILE, "There's no such player.", False, request_id)
         pairs = [("swprofile", ""), ("profileid", profile_id), ("nick", profile["nick"]), ("bio", profile["bio"]),
-                 ("since", profile["created"]), ("hash", profile["avatar_hash"])]
+                 ("since", profile["created"]), ("hash", profile["avatar_hash"]), ("style", profile["style"])]
         if profile["avatar_hash"] and profile["avatar_hash"] != fields.get("have", ""):
             pairs.append(("avatar", base64.b64encode(profile["avatar"]).decode()))
         session.send(*pairs, ("id", request_id))

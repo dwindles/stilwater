@@ -190,6 +190,11 @@ def main():
     check("profile read back", base64.b64decode(got["avatar"]) == picture and got["bio"] == "Stilwater test")
     b.send(("swgetprofile", ""), ("sesskey", b.session_key), ("profileid", a.profile_id), ("have", digest), ("id", 10))
     check("cached picture not sent again", "avatar" not in b.read_until("swprofile", profileid=a.profile_id))
+    a.send(("swsetprofile", ""), ("sesskey", a.session_key), ("style", "accent=280;crew=SSC;color=f2b632;effect=glow"), ("id", 12))
+    a.read_until("swprofile", id=12)
+    b.send(("swgetprofile", ""), ("sesskey", b.session_key), ("profileid", a.profile_id), ("have", digest), ("id", 13))
+    got = b.read_until("swprofile", profileid=a.profile_id)
+    check("profile look read back", got.get("style") == "accent=280;crew=SSC;color=f2b632;effect=glow" and got["bio"] == "Stilwater test")
     a.send(("swsetprofile", ""), ("sesskey", a.session_key), ("avatar", base64.b64encode(b"GIF89a....").decode()), ("id", 11))
     check("non-image picture refused", "error" in a.read_until("error", id=11))
 

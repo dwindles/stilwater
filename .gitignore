@@ -22,3 +22,6 @@ release/
 # Python
 __pycache__/
 *.pyc
+
+# Local tool settings
+.claude/

@@ -7,7 +7,10 @@
 // invites go through the launcher, which stays signed in to Stilwater Online while the game runs: a
 // named pipe, \\.\pipe\stilwater-launcher (launcher/GamePipe.cs has the message format). Joining
 // asks the server to show the joiner only that friend's game in the co-op list (presence.py
-// cmd_swjoin), so the game's own join finds it.
+// cmd_swjoin), so the game's own join finds it. A friend who is playing can be joined without an
+// invite (clicking them, while we don't host co-op): their co-op if it has room, and their
+// Stilwater world either way (ExtraPlayers.cpp: co-op past two players), whose address the
+// launcher sends with "joining".
 //
 // While the menu is open the game keeps running but the player's controls are off, and the mouse
 // moves the menu's own cursor (the panel is dragged by its title bar; where it is goes in juiced.ini).
@@ -29,6 +32,7 @@
 #include "InviteMenu.h"
 #include "Overlay.h"
 #include "Trainer.h"
+#include "ExtraPlayers.h"
 #include "../FileLogger.h"
 #include "../GameConfig.h"
 #include "../General/General.h"
@@ -122,6 +126,8 @@ namespace InviteMenu
 			if (kind == "me" && f.size() > 1) {
 				std::lock_guard lock(g_lock);
 				g_me = f[1];
+				ExtraPlayers::SetName(f[1]);
+				ExtraPlayers::SetStyle(f.size() > 2 ? f[2] : "");
 			}
 			else if (kind == "friends") {
 				std::vector<Friend> friends;
@@ -160,6 +166,10 @@ namespace InviteMenu
 					g_invites.erase(std::remove_if(g_invites.begin(), g_invites.end(), [&](const Invite& i) { return i.id == id; }), g_invites.end());
 				}
 				AddNote("Joining " + f[2], "Pause > Co-op > join an online game. Theirs is the only one listed.");
+			}
+			else if (kind == "world" && f.size() > 2) {
+				ExtraPlayers::Join(f[1], f[2]);
+				AddNote("In " + f[2] + "'s world", "Everyone in it sees everyone else's character.");
 			}
 			else if (kind == "note" && f.size() > 1)
 				AddNote(f[1], "");
@@ -236,8 +246,10 @@ namespace InviteMenu
 				g_invites.erase(std::remove_if(g_invites.begin(), g_invites.end(), [&](const Invite& i) { return now - i.at > InviteMs; }), g_invites.end());
 				for (const Invite& invite : g_invites)
 					rows.push_back({ invite.name + " invited you", "Join", Accent });
+				const bool hosting = Hosting();
 				for (const Friend& f : g_friends)
-					rows.push_back({ f.name, StatusText(f.status), f.status == 2 ? Accent : f.status == 1 ? Green : Faint, false, f.status == 0 });
+					rows.push_back({ f.name, f.status == 2 && !hosting ? "Join" : StatusText(f.status),
+						f.status == 2 ? Accent : f.status == 1 ? Green : Faint, false, f.status == 0 });
 				if (!g_connected) empty = "Open the Stilwater launcher to see your friends here.";
 				else if (g_me.empty()) empty = "Sign in in the Stilwater launcher to see your friends here.";
 				else if (rows.empty()) empty = "No friends yet. Add them on the launcher's Friends page.";
@@ -296,6 +308,12 @@ namespace InviteMenu
 			if (!friendId) return;
 			if (status == 0) {
 				AddNote(name + " is offline", "Invites reach friends who are online.");
+				return;
+			}
+			// A friend already playing, while we don't host co-op: join them, no invite needed (their
+			// co-op if it has room, and their world either way: co-op past two, ExtraPlayers.cpp).
+			if (status == 2 && !Hosting()) {
+				Send(std::string("join") + Field + std::to_string(friendId));
 				return;
 			}
 			Send(std::string("invite") + Field + std::to_string(friendId));
@@ -564,6 +582,7 @@ namespace InviteMenu
 
 		void Draw()
 		{
+			ExtraPlayers::DrawTags();     // under the notes and the menu
 			std::lock_guard lock(g_lock);
 			DrawNotes(Overlay::Scale(), Overlay::Width());
 			if (g_open) DrawMenu();
@@ -628,6 +647,6 @@ namespace InviteMenu
 			while (!g_notes.empty() && now - g_notes.front().at > NoteMs) g_notes.pop_front();
 			notes = !g_notes.empty();
 		}
-		Overlay::SetDraw(g_open || notes ? &Draw : nullptr);
+		Overlay::SetDraw(g_open || notes || ExtraPlayers::HasTags() ? &Draw : nullptr);
 	}
 }

@@ -25,10 +25,12 @@ internal sealed class Online : IDisposable
 
     public enum Status { Offline = 0, Online = 1, Playing = 2 }
 
-    public sealed record Friend(int ProfileId, string Name, Status Status, string Activity);
+    /// <summary>A friend; Address is where they're online from (their status's ip), for joining their world.</summary>
+    public sealed record Friend(int ProfileId, string Name, Status Status, string Activity, string Address = "");
     public sealed record Request(int ProfileId, string Name, string Signature);
     /// <summary>A player's public profile (Stilwater Online only): bio and picture (JPEG or PNG).</summary>
-    public sealed record Profile(int ProfileId, string Bio, string Hash, byte[]? Picture);
+    /// <summary>A profile. Style is its look, key=value;... (accent, crew, title, color, effect), read by the UI and the game.</summary>
+    public sealed record Profile(int ProfileId, string Bio, string Hash, byte[]? Picture, string Style = "");
 
     public event Action? Changed;
     public event Action<Friend>? Invited;
@@ -164,26 +166,32 @@ internal sealed class Online : IDisposable
 
     public Profile? ProfileOf(int profileId) => _profiles.GetValueOrDefault(profileId);
 
-    /// <summary>Accepts a friend's invite: for the next few minutes the game's co-op matchmaking
-    /// finds only that friend's game (server/presence.py cmd_swjoin), so it joins them.</summary>
+    /// <summary>Joins a friend who is playing (no invite needed): for the next few minutes the game's
+    /// co-op matchmaking finds only that friend's game (server/presence.py cmd_swjoin), so it joins
+    /// them if their co-op has room, and Joined tells the game to join their world either way.</summary>
     public async Task JoinAsync(Friend friend)
     {
-        if (UsesOpenSpy) throw new InvalidOperationException("Joining from an invite is a Stilwater Online feature.");
+        if (UsesOpenSpy) throw new InvalidOperationException("Joining a friend is a Stilwater Online feature.");
         await RequestAsync($@"\swjoin\sesskey\{_sessionKey}\profileid\{friend.ProfileId}");
+        Joined?.Invoke(friend);
     }
 
-    /// <summary>Changes your picture (an empty array removes it) and/or bio; null leaves either as it is.</summary>
-    public async Task SetProfileAsync(byte[]? picture, string? bio)
+    /// <summary>After JoinAsync: the friend joined (GamePipe passes their world's address to the game).</summary>
+    public event Action<Friend>? Joined;
+
+    /// <summary>Changes your picture (an empty array removes it), bio and/or look; null leaves each as it is.</summary>
+    public async Task SetProfileAsync(byte[]? picture, string? bio, string? style = null)
     {
         if (UsesOpenSpy) throw new InvalidOperationException("Profiles are a Stilwater Online feature.");
         var message = new StringBuilder($@"\swsetprofile\\sesskey\{_sessionKey}");
         if (bio is not null) message.Append($@"\bio\{Clean(bio)}");
         if (picture is not null) message.Append($@"\avatar\{Convert.ToBase64String(picture)}");
+        if (style is not null) message.Append($@"\style\{Clean(style)}");
         var reply = await RequestAsync(message.ToString());
         var old = _profiles.GetValueOrDefault(ProfileId);
         var hash = reply.GetValueOrDefault("hash", "");
         var kept = picture ?? old?.Picture;
-        _profiles[ProfileId] = new Profile(ProfileId, bio ?? old?.Bio ?? "", hash, kept is { Length: > 0 } ? kept : null);
+        _profiles[ProfileId] = new Profile(ProfileId, bio ?? old?.Bio ?? "", hash, kept is { Length: > 0 } ? kept : null, style ?? old?.Style ?? "");
         AvatarCache.Write(ProfileId, hash, _profiles[ProfileId].Picture);
         Raise();
     }
@@ -200,7 +208,7 @@ internal sealed class Online : IDisposable
             byte[]? picture = null;
             if (reply.TryGetValue("avatar", out var data)) picture = Convert.FromBase64String(data);
             else if (hash.Length > 0 && cached?.Hash == hash) picture = cached.Value.Data;
-            _profiles[profileId] = new Profile(profileId, reply.GetValueOrDefault("bio", ""), hash, picture);
+            _profiles[profileId] = new Profile(profileId, reply.GetValueOrDefault("bio", ""), hash, picture, reply.GetValueOrDefault("style", ""));
             if (reply.ContainsKey("avatar") || hash.Length == 0) AvatarCache.Write(profileId, hash, picture);
             Raise();
         }
@@ -393,7 +401,8 @@ internal sealed class Online : IDisposable
                     var fields = text.Split('|');
                     string Field(string key) { var i = Array.IndexOf(fields, key); return i >= 0 && i + 1 < fields.Length ? fields[i + 1] : ""; }
                     var status = int.TryParse(Field("s"), out var s) ? s : 0;
-                    Track(id, status == 0 ? Status.Offline : Field("ss").Contains("co-op", StringComparison.OrdinalIgnoreCase) || Field("ss").Contains("Playing") ? Status.Playing : Status.Online, Field("ss"));
+                    Track(id, status == 0 ? Status.Offline : Field("ss").Contains("co-op", StringComparison.OrdinalIgnoreCase) || Field("ss").Contains("Playing") ? Status.Playing : Status.Online, Field("ss"),
+                          Address(Field("ip")));
                     break;
                 case "2":               // friend request: <reason>|signed|<signature>
                     var signed = text.IndexOf("|signed|", StringComparison.Ordinal);
@@ -426,9 +435,10 @@ internal sealed class Online : IDisposable
         Raise();
     }
 
-    private void Track(int id, Status status, string activity)
+    private void Track(int id, Status status, string activity, string? address = null)
     {
-        _friends[id] = new Friend(id, Name(id), status, activity);
+        address ??= _friends.TryGetValue(id, out var known) ? known.Address : "";
+        _friends[id] = new Friend(id, Name(id), status, activity, address);
         LookUp(id);
         if (!_profiles.ContainsKey(id)) _ = LoadProfileAsync(id);
     }
@@ -518,6 +528,10 @@ internal sealed class Online : IDisposable
         for (var i = 1; i + 1 < parts.Length; i += 2) result.TryAdd(parts[i], parts[i + 1]);
         return result;
     }
+
+    /// <summary>A status's ip: the address's four bytes in order, read as a little-endian int.</summary>
+    private static string Address(string ip) =>
+        int.TryParse(ip, out var value) && value != 0 ? new System.Net.IPAddress(BitConverter.GetBytes(value)).ToString() : "";
 
     private static string Clean(string text) => text.Replace("\\", "").Replace("|", "");
 

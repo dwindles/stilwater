@@ -4,6 +4,8 @@
 #include "Trainer.h"
 
 #include "Horns.h"
+#include "ExtraPlayers.h"
+#include "MapIcons.h"
 
 #include <Windows.h>
 #include <algorithm>
@@ -42,6 +44,23 @@ namespace Trainer
 		int g_wanted = 0;
 		int g_hour = 12;
 		int g_vehicle = 0;
+
+		// The switches are kept in juiced.ini [StilwaterTrainer] and come back on every launch, applied
+		// once each time a save has loaded (g_applied).
+		constexpr const char* Saved = "StilwaterTrainer";
+		bool g_applied = false;
+
+		void Remember()
+		{
+			GameConfig::SetValue(Saved, "GodMode", g_god_mode);
+			GameConfig::SetValue(Saved, "NeverWanted", g_never_wanted);
+			GameConfig::SetValue(Saved, "CantBeArrested", g_no_busted);
+			GameConfig::SetValue(Saved, "Pedestrians", g_peds);
+			GameConfig::SetValue(Saved, "Traffic", g_traffic);
+			GameConfig::SetValue(Saved, "PolicePatrols", g_cops);
+			GameConfig::SetValue(Saved, "GangPatrols", g_gangs);
+			GameConfig::SetValue(Saved, "ShowMyNameTag", ExtraPlayers::OwnTag());
+		}
 		std::vector<Vehicle> g_vehicles;
 
 		bool InSinglePlayer()
@@ -98,6 +117,7 @@ namespace Trainer
 			{ [] { return std::string("God mode\t") + (g_god_mode ? "On" : "Off"); },
 			  [] {
 				  g_god_mode = !g_god_mode;
+				  Remember();
 				  Lua(std::string(g_god_mode ? "turn_invulnerable(" : "turn_vulnerable(") + Player + ")");
 			  } },
 			{ [] { return std::string("Clear wanted level"); },
@@ -105,6 +125,7 @@ namespace Trainer
 			{ [] { return std::string("Never wanted\t") + (g_never_wanted ? "On" : "Off"); },
 			  [] {
 				  g_never_wanted = !g_never_wanted;
+				  Remember();
 				  Lua(g_never_wanted ? "notoriety_reset(\"police\") notoriety_set_max(\"police\", 0)"
 					  : "notoriety_set_max(\"police\", 5)");
 			  } },
@@ -153,29 +174,63 @@ namespace Trainer
 			{ [] { return std::string("Can't be arrested\t") + (g_no_busted ? "On" : "Off"); },
 			  [] {
 				  g_no_busted = !g_no_busted;
+				  Remember();
 				  Lua(std::string("set_player_can_be_busted(") + Player + (g_no_busted ? ", false)" : ", true)"));
 			  } },
 			{ [] { return std::string("Pedestrians\t") + (g_peds ? "On" : "Off"); },
-			  [] { g_peds = !g_peds; Lua(std::string("spawning_pedestrians(") + (g_peds ? "true" : "false") + ")"); } },
+			  [] { g_peds = !g_peds; Remember(); Lua(std::string("spawning_pedestrians(") + (g_peds ? "true" : "false") + ")"); } },
 			{ [] { return std::string("Traffic\t") + (g_traffic ? "On" : "Off"); },
-			  [] { g_traffic = !g_traffic; Lua(std::string("spawning_vehicles(") + (g_traffic ? "true" : "false") + ")"); } },
+			  [] { g_traffic = !g_traffic; Remember(); Lua(std::string("spawning_vehicles(") + (g_traffic ? "true" : "false") + ")"); } },
 			{ [] { return std::string("Police patrols\t") + (g_cops ? "On" : "Off"); },
-			  [] { g_cops = !g_cops; Lua(std::string("spawning_allow_cop_ambient_spawns(") + (g_cops ? "true" : "false") + ")"); } },
+			  [] { g_cops = !g_cops; Remember(); Lua(std::string("spawning_allow_cop_ambient_spawns(") + (g_cops ? "true" : "false") + ")"); } },
 			{ [] { return std::string("Gang patrols\t") + (g_gangs ? "On" : "Off"); },
-			  [] { g_gangs = !g_gangs; Lua(std::string("spawning_allow_gang_ambient_spawns(") + (g_gangs ? "true" : "false") + ")"); } },
+			  [] { g_gangs = !g_gangs; Remember(); Lua(std::string("spawning_allow_gang_ambient_spawns(") + (g_gangs ? "true" : "false") + ")"); } },
+			// Co-op past two players (ExtraPlayers.cpp): who's in the world (clicking leaves a friend's
+			// world), and a friend's character that copies you 3 s late, to try it alone.
+			{ [] { return "World\t" + ExtraPlayers::Status(); },
+			  [] { ExtraPlayers::Leave(); } },
+			{ [] { return std::string("Test friend character\t") + (ExtraPlayers::Ghost() ? "On" : "Off"); },
+			  [] { ExtraPlayers::SetGhost(!ExtraPlayers::Ghost()); } },
+			{ [] { return std::string("Show my name tag\t") + (ExtraPlayers::OwnTag() ? "On" : "Off"); },
+			  [] { ExtraPlayers::SetOwnTag(!ExtraPlayers::OwnTag()); Remember(); } },
+			// Map icons of our own (MapIcons.cpp): one where you stand, in the style picked with left/right.
+			{ [] { return "Add map icon here\t" + MapIcons::StyleName(); },
+			  [] { MapIcons::AddHere(); },
+			  [](int direction) { MapIcons::CycleStyle(direction); } },
+			{ [] { return "Remove nearest map icon\t" + std::to_string(MapIcons::Count()) + " placed"; },
+			  [] { MapIcons::RemoveNearest(); } },
 		};
 		constexpr int ItemCount = (int)(sizeof(g_items) / sizeof(g_items[0]));
 	}
 
 	void Init()
 	{
+		g_god_mode = GameConfig::GetValue(Saved, "GodMode", 0, "The Insert menu's trainer switches, as you left them (1 = on).") != 0;
+		g_never_wanted = GameConfig::GetValue(Saved, "NeverWanted", 0) != 0;
+		g_no_busted = GameConfig::GetValue(Saved, "CantBeArrested", 0) != 0;
+		g_peds = GameConfig::GetValue(Saved, "Pedestrians", 1) != 0;
+		g_traffic = GameConfig::GetValue(Saved, "Traffic", 1) != 0;
+		g_cops = GameConfig::GetValue(Saved, "PolicePatrols", 1) != 0;
+		g_gangs = GameConfig::GetValue(Saved, "GangPatrols", 1) != 0;
+		ExtraPlayers::SetOwnTag(GameConfig::GetValue(Saved, "ShowMyNameTag", 0) != 0);
 	}
 
 	void Update()
 	{
-		if (!InSinglePlayer())
+		if (!InSinglePlayer()) {
+			g_applied = false;
 			return;
+		}
 		Horns::Update();
+		// The switches left off their default, once a save has loaded.
+		if (!g_applied) {
+			g_applied = true;
+			if (g_no_busted) Lua(std::string("set_player_can_be_busted(") + Player + ", false)");
+			if (!g_peds) Lua("spawning_pedestrians(false)");
+			if (!g_traffic) Lua("spawning_vehicles(false)");
+			if (!g_cops) Lua("spawning_allow_cop_ambient_spawns(false)");
+			if (!g_gangs) Lua("spawning_allow_gang_ambient_spawns(false)");
+		}
 		// Missions, cutscenes and dying turn invulnerability and the wanted cap back off, so the
 		// switches are applied again every couple of seconds while they're on.
 		static DWORD last = 0;

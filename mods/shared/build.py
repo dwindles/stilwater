@@ -195,8 +195,12 @@ def stores_table(game, items):
     data, rest = data_section(text)
     slots = {re.search(r"<Name>(.*?)</Name>", b).group(1): re.search(r"<Slot>(.*?)</Slot>", b).group(1)
              for b in re.findall(r"<Customization_Item>.*?</Customization_Item>", items, re.S)}
+    # Only items some store sold already, and ours: the rest are the story characters' and unfinished
+    # ones ("flasher coat with Morphs" crashed the game when tried on in a store).
+    sold = set(re.findall(r"<Item>(.*?)</Item>", data)) | set(NEW_ITEMS)
     # Jewellery last: a store that would go over the limit leaves out the jewellery that doesn't fit.
-    clothing = sorted((name for name, slot in slots.items() if slot in CLOTHING_SLOTS), key=lambda n: slots[n] in JEWELLERY)
+    clothing = sorted((name for name, slot in slots.items() if slot in CLOTHING_SLOTS and name in sold),
+                      key=lambda n: slots[n] in JEWELLERY)
     gone = {clone["takes"] for clone in CLONES}
 
     def add(match):

@@ -3,8 +3,9 @@
 window.mock = {
   online: {
     signedIn: true, nick: "dee", profileId: 20000001, bio: "Running Stilwater since day one", avatar: null,
+    style: "accent=280;crew=SSC;title=Third Street Saint;color=f2b632;effect=glow",
     friends: [
-      { id: 20000002, name: "angel", status: "playing", activity: "Playing co-op", avatar: null },
+      { id: 20000002, name: "angel", status: "playing", activity: "Playing co-op", avatar: null, style: "crew=SSC;color=ff6fb5;effect=rainbow" },
       { id: 20000003, name: "Shaundi", status: "online", activity: "In the Stilwater launcher", avatar: null },
       { id: 20000004, name: "Pierce", status: "offline", activity: "", avatar: null },
       { id: 20000005, name: "Gat", status: "offline", activity: "", avatar: null },
@@ -30,6 +31,9 @@ window.mock = {
       case "online.check": return { ok: true, server: "155.138.222.253" };
       case "online.ping": return Math.random() < .03 ? null : Math.round(11 + Math.random() * 6 + (Math.random() < .08 ? 40 : 0));
       case "online.status": return this.online;
+      case "online.join": return null;
+      case "profile.setStyle": this.online.style = args.style; return null;
+      case "profile.setBio": this.online.bio = args.bio; return null;
       case "online.savedLogin": return { nick: "dee", email: "dee@example.com", hasPassword: true };
       case "app.log": return "18:26:01 Stilwater runtime loaded\n18:26:02 Hooks installed\n18:26:05 Online: signed in as dee";
       case "app.nextVersion": return "0.2.2";

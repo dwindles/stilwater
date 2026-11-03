@@ -72,17 +72,106 @@ document.addEventListener("click", e => {
   if (link) { e.preventDefault(); api("app.openUrl", { url: link.dataset.url }); }
 });
 
+// --- profile look: accent (banner hue), crew (tag, 4 letters), title, color (name, hex) and effect
+// (none, glow, outline, pulse, rainbow), kept on the server as key=value;... The game draws name tags
+// with color and effect too.
+const ACCENTS = [45, 25, 0, 330, 280, 220, 190, 140];
+const NAME_COLORS = ["ffffff", "f2b632", "ff5a4f", "ff6fb5", "a77bff", "5aa9ff", "45d6c8", "6cdc6c"];
+const EFFECTS = ["none", "glow", "outline", "pulse", "rainbow"];
+function parseStyle(text) {
+  const s = {};
+  for (const part of String(text || "").split(";")) {
+    const i = part.indexOf("=");
+    if (i > 0) s[part.slice(0, i)] = part.slice(i + 1);
+  }
+  return s;
+}
+function styleText(s) {
+  return Object.entries(s).filter(([, v]) => v !== "" && v != null)
+    .map(([k, v]) => `${k}=${String(v).replace(/[;=\\|]/g, "")}`).join(";");
+}
+// A name drawn in its owner's style, crew tag first.
+function styledName(name, style) {
+  const s = typeof style === "string" ? parseStyle(style) : style || {};
+  const colour = /^[0-9a-f]{6}$/i.test(s.color || "") ? `#${s.color}` : "";
+  const effect = EFFECTS.includes(s.effect) ? s.effect : "none";
+  return `${s.crew ? `<span class="crew">${esc(s.crew)}</span>` : ""}<span class="nm fx-${effect}"${colour ? ` style="--nc:${colour}"` : ""}>${esc(name)}</span>`;
+}
+
 // --- navigation
 let page = "play";
 function show(name) {
   page = name;
   document.querySelectorAll(".tab").forEach(b => b.classList.toggle("active", b.dataset.page === name));
+  moveInk();
   document.querySelectorAll(".page").forEach(p => p.hidden = p.id !== `page-${name}`);
   ({ play: renderPlay, friends: renderFriends, mods: loadMods, settings: loadSettings })[name]();
   $(".content").scrollTop = 0;
   pingLoop();
 }
 document.querySelectorAll(".tab").forEach(b => b.onclick = () => show(b.dataset.page));
+function moveInk() {
+  const tab = $(".tab.active"), ink = $("#tab-ink");
+  if (!tab || !ink) return;
+  ink.style.left = `${tab.offsetLeft}px`;
+  ink.style.width = `${tab.offsetWidth}px`;
+}
+window.addEventListener("resize", moveInk);
+document.fonts.ready.then(moveInk);
+
+// --- ambience: city lights rising slowly behind the pages (app.css has the rest). Drawn at about
+// 30 frames a second, and not at all while the game runs, the window is hidden or motion is reduced.
+(() => {
+  const canvas = $("#amb-lights"), ctx = canvas.getContext("2d");
+  const colours = ["242,182,50", "139,79,216", "255,236,200", "92,160,255"];
+  let dots = [], last = 0;
+  const still = matchMedia("(prefers-reduced-motion: reduce)");
+  function size() {
+    canvas.width = innerWidth * devicePixelRatio;
+    canvas.height = innerHeight * devicePixelRatio;
+    const count = Math.round(innerWidth * innerHeight / 38000);
+    dots = Array.from({ length: count }, () => dot(true));
+  }
+  function dot(anywhere) {
+    return {
+      x: Math.random(), y: anywhere ? Math.random() : 1.08, r: 6 + Math.random() * 26,
+      speed: .004 + Math.random() * .012, sway: Math.random() * Math.PI * 2,
+      colour: colours[Math.random() < .55 ? 0 : Math.floor(Math.random() * colours.length)], alpha: .04 + Math.random() * .1,
+    };
+  }
+  function frame(now) {
+    requestAnimationFrame(frame);
+    if (now - last < 33 || document.hidden || document.body.classList.contains("game-running") || still.matches) return;
+    const dt = Math.min((now - last) / 1000, .1);
+    last = now;
+    const w = canvas.width, h = canvas.height, k = devicePixelRatio;
+    ctx.clearRect(0, 0, w, h);
+    ctx.globalCompositeOperation = "lighter";
+    for (const d of dots) {
+      d.y -= d.speed * dt;
+      d.sway += dt * .4;
+      if (d.y < -.1) Object.assign(d, dot(false));
+      const x = (d.x + Math.sin(d.sway) * .01) * w, y = d.y * h, r = d.r * k;
+      const twinkle = d.alpha * (.75 + .25 * Math.sin(now / 900 + d.sway * 3));
+      const g = ctx.createRadialGradient(x, y, 0, x, y, r);
+      g.addColorStop(0, `rgba(${d.colour},${twinkle})`);
+      g.addColorStop(1, `rgba(${d.colour},0)`);
+      ctx.fillStyle = g;
+      ctx.fillRect(x - r, y - r, r * 2, r * 2);
+    }
+  }
+  addEventListener("resize", size);
+  size();
+  requestAnimationFrame(frame);
+})();
+
+// The hero's art leans a little toward the mouse.
+$("#hero").addEventListener("mousemove", e => {
+  const box = e.currentTarget.getBoundingClientRect();
+  $("#art").style.setProperty("--px", `${((e.clientX - box.left) / box.width - .5) * -18}px`);
+  $("#art").style.setProperty("--py", `${((e.clientY - box.top) / box.height - .5) * -10}px`);
+});
+$("#hero").addEventListener("mouseleave", () => { $("#art").style.setProperty("--px", "0px"); $("#art").style.setProperty("--py", "0px"); });
 $("#me").onclick = () => online.signedIn ? editProfile() : show("friends");
 
 // --- state
@@ -107,7 +196,11 @@ async function loadApp() {
   $("#upload-button").hidden = !app.staff;
   if (app.art) {
     const art = $("#art"), picture = new Image();
-    picture.onload = () => { art.style.backgroundImage = `url("${app.art}")`; art.classList.add("loaded"); };
+    picture.onload = () => {
+      art.style.backgroundImage = $("#amb-art").style.backgroundImage = `url("${app.art}")`;
+      art.classList.add("loaded");
+      $("#amb-art").classList.add("loaded");
+    };
     picture.src = app.art;
   } else { $("#hero").className = "hero plain"; $("#hero").textContent = "Saints Row 2"; }
   renderPlay();
@@ -144,11 +237,13 @@ function renderPlay() {
     ? `<p class="empty">Sign in to see who's online.</p><button class="button small" onclick="show('friends')">Sign in</button>`
     : on.length ? on.map(f => `
       <div class="friend">${avatar(f, "small", statusOf(f))}
-        <div class="row-text"><b>${esc(f.name)}</b><span>${esc(f.activity || "Online")}</span></div>
-        <button class="button small" data-invite="${f.id}">Invite</button>
+        <div class="row-text"><b>${styledName(f.name, f.style)}</b><span>${esc(f.activity || "Online")}</span></div>
+        ${f.status === "playing" ? `<button class="button small accent" data-join="${f.id}">Join</button>`
+          : `<button class="button small" data-invite="${f.id}">Invite</button>`}
       </div>`).join("")
     : `<p class="empty">${online.friends.length ? "No one's online." : "No friends added yet."}</p>`;
   document.querySelectorAll("[data-invite]").forEach(b => b.onclick = () => invite(+b.dataset.invite));
+  document.querySelectorAll("[data-join]").forEach(b => b.onclick = () => join(+b.dataset.join));
   renderService();
 }
 
@@ -276,15 +371,35 @@ async function invite(id) {
   await run(() => api("online.invite", { id }), `Invited ${f ? f.name : "your friend"}. Start the game and host co-op.`);
 }
 
+// Join a friend who is playing, no invite needed: their co-op if it has room, their world either way.
+// The game is started if it isn't running; the launcher tells it where to go once it's up.
+async function join(id) {
+  const f = online.friends.find(x => x.id === id);
+  const done = await run(() => api("online.join", { id }).then(() => true));
+  if (!done) return;
+  if (document.body.classList.contains("game-running")) toast(`Joining ${f ? f.name : "your friend"}. Their co-op is under Pause > Co-op if it has room.`);
+  else { toast(`Joining ${f ? f.name : "your friend"} once the game starts.`); show("play"); $("#play-button").click(); }
+}
+
 function renderFriends() {
   renderMe();
   if (!online.signedIn) return renderSignIn();
+  const playing = online.friends.filter(f => f.status === "playing").length;
+  const around = online.friends.filter(f => f.status !== "offline").length;
+  const look = parseStyle(online.style), tint = look.accent !== undefined && look.accent !== "" ? +look.accent : null;
+  const base = tint ?? hue(online.nick);
+  const backdrop = online.avatar && tint === null ? `background-image:url(${online.avatar})`
+    : `background:linear-gradient(120deg,hsl(${base},60%,38%),hsl(${(base + 50) % 360},50%,16%))`;
   $("#account").innerHTML = `
-    <div class="list profile">
-      <button class="avatar-edit" id="pick-avatar" title="Change picture">${avatar({ name: online.nick, avatar: online.avatar }, "big")}</button>
-      <div class="row-text"><b>${esc(online.nick)}</b>${online.bio ? `<span>${esc(online.bio)}</span>` : ""}</div>
-      <button class="button" id="edit-profile">Edit profile</button>
-      <button class="button ghost" id="sign-out">Sign out</button>
+    <div class="profile-banner">
+      <div class="backdrop" style="${backdrop}"></div>
+      <div class="inner">
+        <button class="avatar-edit" id="pick-avatar" title="Change picture">${avatar({ name: online.nick, avatar: online.avatar }, "huge")}</button>
+        <div class="who"><b>${styledName(online.nick, look)}</b>${look.title ? `<em class="title">${esc(look.title)}</em>` : ""}${online.bio ? `<span>${esc(online.bio)}</span>` : ""}
+          <small>${around} of ${online.friends.length} friends online${playing ? ` · ${playing} playing` : ""}</small></div>
+        <button class="button" id="edit-profile">Edit profile</button>
+        <button class="button ghost" id="sign-out">Sign out</button>
+      </div>
     </div>`;
   $("#pick-avatar").onclick = pickAvatar;
   $("#edit-profile").onclick = editProfile;
@@ -305,8 +420,9 @@ function renderFriends() {
       </div>
       ${sorted.length ? `<div class="list">${sorted.map(f => `
         <div class="row">${avatar(f, "", statusOf(f))}
-          <div class="row-text"><b>${esc(f.name)}</b><span>${esc(f.status === "offline" ? "Offline" : f.activity || "Online")}</span></div>
-          <div class="actions">${f.status !== "offline" ? `<button class="button small" data-invite="${f.id}">Invite</button>` : ""}
+          <div class="row-text"><b>${styledName(f.name, f.style)}</b><span>${esc(f.status === "offline" ? "Offline" : f.activity || "Online")}</span></div>
+          <div class="actions">${f.status === "playing" ? `<button class="button small accent" data-join="${f.id}">Join</button>` : ""}
+            ${f.status !== "offline" ? `<button class="button small" data-invite="${f.id}">Invite</button>` : ""}
             <button class="button small ghost" data-remove="${f.id}">Remove</button></div>
         </div>`).join("")}</div>` : `<p class="empty">No friends added yet.</p>`}
     </section>`;
@@ -318,6 +434,7 @@ function renderFriends() {
   document.querySelectorAll("[data-accept]").forEach(b => b.onclick = () => run(() => api("online.accept", { id: +b.dataset.accept })));
   document.querySelectorAll("[data-ignore]").forEach(b => b.onclick = () => run(() => api("online.ignore", { id: +b.dataset.ignore })));
   document.querySelectorAll("[data-invite]").forEach(b => b.onclick = () => invite(+b.dataset.invite));
+  document.querySelectorAll("[data-join]").forEach(b => b.onclick = () => join(+b.dataset.join));
   document.querySelectorAll("[data-remove]").forEach(b => b.onclick = () => {
     const f = online.friends.find(x => x.id === +b.dataset.remove);
     modal(`<h2>Remove ${esc(f.name)}?</h2><p class="muted">You can add each other again later.</p>
@@ -351,18 +468,51 @@ async function renderSignIn() {
 
 function pickAvatar() { run(() => api("profile.pickAvatar"), picked => picked ? "Profile picture updated." : null); }
 function editProfile() {
+  const look = parseStyle(online.style);
   modal(`
     <h2>Your profile</h2>
-    <p class="muted small">Friends see your picture and bio in their launcher.</p>
-    <div style="display:flex;align-items:center;gap:16px;margin-top:16px">${avatar({ name: online.nick, avatar: online.avatar }, "big")}
+    <p class="muted small">Friends see this in their launcher. Your name's colour and effect show over your head in game.</p>
+    <div class="tag-preview" id="m-preview"></div>
+    <div style="display:flex;align-items:center;gap:16px;margin-top:14px">${avatar({ name: online.nick, avatar: online.avatar }, "big")}
       <div style="display:flex;flex-direction:column;gap:8px"><button class="button" id="m-pick">Choose picture…</button>
       ${online.avatar ? `<button class="button ghost small" id="m-clear">Remove picture</button>` : ""}</div></div>
     <div class="field"><label>Bio</label><input class="input" id="m-bio" maxlength="120" value="${esc(online.bio || "")}" placeholder="A line about you"></div>
+    <div class="field-row">
+      <div class="field"><label>Crew tag</label><input class="input" id="m-crew" maxlength="4" value="${esc(look.crew || "")}" placeholder="SSC" spellcheck="false"></div>
+      <div class="field grow"><label>Title</label><input class="input" id="m-title" maxlength="24" value="${esc(look.title || "")}" placeholder="Third Street Saint"></div>
+    </div>
+    <div class="field"><label>Banner</label><div class="swatches" id="m-accent">${ACCENTS.map(h =>
+      `<button class="swatch${+look.accent === h && look.accent !== "" ? " on" : ""}" data-v="${h}" style="background:hsl(${h},70%,48%)"></button>`).join("")}
+      <button class="swatch auto${look.accent == null || look.accent === "" ? " on" : ""}" data-v="" title="From your picture">A</button></div></div>
+    <div class="field"><label>Name colour</label><div class="swatches" id="m-color">${NAME_COLORS.map(c =>
+      `<button class="swatch${(look.color || "ffffff") === c ? " on" : ""}" data-v="${c}" style="background:#${c}"></button>`).join("")}</div></div>
+    <div class="field"><label>Name effect</label><div class="segments" id="m-effect">${EFFECTS.map(e =>
+      `<button class="segment${(look.effect || "none") === e ? " on" : ""}" data-v="${e}">${e[0].toUpperCase() + e.slice(1)}</button>`).join("")}</div></div>
     <div class="modal-buttons"><button class="button ghost" data-close>Cancel</button><button class="button accent" id="m-save">Save</button></div>`,
     close => {
+      const picked = id => $(`#${id} .on`)?.dataset.v ?? "";
+      const current = () => ({ accent: picked("m-accent"), crew: $("#m-crew").value.trim().toUpperCase(), title: $("#m-title").value.trim(),
+        color: picked("m-color"), effect: picked("m-effect") });
+      const preview = () => { $("#m-preview").innerHTML = `<div class="tag">${styledName(online.nick, current())}</div>`; };
+      for (const id of ["m-accent", "m-color", "m-effect"])
+        $(`#${id}`).onclick = e => {
+          const b = e.target.closest("button");
+          if (!b) return;
+          $(`#${id}`).querySelectorAll("button").forEach(x => x.classList.toggle("on", x === b));
+          preview();
+        };
+      $("#m-crew").oninput = $("#m-title").oninput = preview;
+      preview();
       $("#m-pick").onclick = () => { close(); pickAvatar(); };
       if ($("#m-clear")) $("#m-clear").onclick = () => { close(); run(() => api("profile.clearAvatar"), "Picture removed."); };
-      $("#m-save").onclick = () => { close(); run(() => api("profile.setBio", { bio: $("#m-bio").value.trim() }), "Profile saved."); };
+      $("#m-save").onclick = async () => {
+        const bio = $("#m-bio").value.trim(), style = styleText(current());
+        close();
+        await run(async () => {
+          if (bio !== (online.bio || "")) await api("profile.setBio", { bio });
+          if (style !== (online.style || "")) await api("profile.setStyle", { style });
+        }, "Profile saved.");
+      };
     });
 }
 

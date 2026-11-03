@@ -7,6 +7,12 @@
 <link rel="stylesheet" href="app.css">
 </head>
 <body>
+<div class="ambience" aria-hidden="true">
+  <div class="amb-art" id="amb-art"></div>
+  <div class="amb-glow gold"></div><div class="amb-glow purple"></div>
+  <canvas class="amb-lights" id="amb-lights"></canvas>
+  <div class="amb-grain"></div>
+</div>
 <div class="app">
   <header class="topbar">
     <div class="brand"><img class="logo" src="logo.png" alt=""><span class="wordmark">STILWATER</span></div>
@@ -15,6 +21,7 @@
       <button class="tab" data-page="friends">Friends<b class="badge" id="friends-badge" hidden></b></button>
       <button class="tab" data-page="mods">Mods</button>
       <button class="tab" data-page="settings">Settings</button>
+      <span class="tab-ink" id="tab-ink"></span>
     </nav>
     <button class="me" id="me">
       <span class="me-text"><b id="me-name">Not signed in</b><small id="me-status">Sign in</small></span>
@@ -75,11 +82,11 @@
       <div id="account"></div>
       <div id="friends-body"></div>
       <section class="block">
-        <div class="block-head"><h2>Playing co-op</h2></div>
+        <div class="block-head"><h2>Playing together</h2></div>
         <ol class="steps">
-          <li>Both of you start the game from Stilwater. The launcher signs out while the game runs, because the game uses the same account.</li>
-          <li>Host: load your save, open Co-op and choose Online.</li>
-          <li>Friend: Co-op → Online, then join from the list or accept the invite.</li>
+          <li>Start the game from Stilwater and load your save. Your friends see you as playing.</li>
+          <li>To join a friend who's playing, press Join here or in the game's Insert menu. No invite needed.</li>
+          <li>The first friend to join plays the game's own co-op with the host. Everyone past that keeps their own save and shows up as a character in everyone's world.</li>
           <li>Check that your mods codes match first. Different mods can desync or crash the session.</li>
         </ol>
       </section>

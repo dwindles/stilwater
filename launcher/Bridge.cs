@@ -121,6 +121,7 @@ internal sealed class Bridge
             case "online.ignore": _online.Ignore(RequestFrom(Id())); return null;
             case "online.remove": await _online.RemoveFriendAsync(FriendFrom(Id())); return null;
             case "online.invite": await _online.InviteAsync(FriendFrom(Id())); return null;
+            case "online.join": await _online.JoinAsync(FriendFrom(Id())); return null;
 
             case "profile.pickAvatar":
             {
@@ -131,6 +132,7 @@ internal sealed class Bridge
             }
             case "profile.clearAvatar": await _online.SetProfileAsync([], null); return null;
             case "profile.setBio": await _online.SetProfileAsync(null, Text("bio")); return null;
+            case "profile.setStyle": await _online.SetProfileAsync(null, null, Text("style")); return null;
 
             case "mods.list":
                 return new
@@ -339,10 +341,12 @@ internal sealed class Bridge
             nick = _online.Nick,
             profileId = _online.ProfileId,
             bio = _online.ProfileOf(_online.ProfileId)?.Bio ?? "",
+            style = _online.ProfileOf(_online.ProfileId)?.Style ?? "",
             avatar = PictureOf(_online.ProfileId),
             friends = _online.Friends.Select(f => new
             {
                 id = f.ProfileId, name = f.Name, activity = f.Activity, avatar = PictureOf(f.ProfileId),
+                style = _online.ProfileOf(f.ProfileId)?.Style ?? "",
                 status = f.Status switch { Online.Status.Playing => "playing", Online.Status.Online => "online", _ => "offline" },
             }).ToList(),
             requests = _online.Requests.Select(r => new { id = r.ProfileId, name = r.Name, avatar = PictureOf(r.ProfileId) }).ToList(),

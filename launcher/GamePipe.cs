@@ -11,8 +11,8 @@ namespace Stilwater.Launcher;
 ///
 /// One message per line (UTF-8), fields separated by U+001F and list items by U+001E:
 ///   launcher -> game: me &lt;nick&gt; | friends &lt;id␞status␞name␞activity&gt;... | invite &lt;id&gt; &lt;name&gt; |
-///                     joining &lt;id&gt; &lt;name&gt; | note &lt;text&gt;
-///   game -> launcher: hello | invite &lt;id&gt; | join &lt;id&gt;
+///                     joining &lt;id&gt; &lt;name&gt; | world &lt;address&gt; &lt;name&gt; | note &lt;text&gt;
+///   game -> launcher: hello | invite &lt;id&gt; | join &lt;id&gt; | world &lt;id&gt;
 /// Status is 0 offline, 1 online, 2 playing.</summary>
 internal sealed class GamePipe : IDisposable
 {
@@ -24,13 +24,15 @@ internal sealed class GamePipe : IDisposable
     private readonly CancellationTokenSource _stop = new();
     private readonly object _writing = new();
     private StreamWriter? _writer;
+    private Online.Friend? _world;     // the world to join, told to the game when it connects (joined from the launcher)
 
     public GamePipe(Form form, Online online)
     {
         _form = form;
         _online = online;
-        _online.Changed += () => Send(FriendsMessage());
+        _online.Changed += () => { Send(MeMessage()); Send(FriendsMessage()); };
         _online.Invited += friend => Send("invite", friend.ProfileId.ToString(), friend.Name);
+        _online.Joined += friend => OnUi(() => { _world = friend; SendWorld(); });
         _ = Task.Run(ServeAsync);
     }
 
@@ -47,7 +49,7 @@ internal sealed class GamePipe : IDisposable
                 await pipe.WaitForConnectionAsync(_stop.Token);
                 using var reader = new StreamReader(pipe, new UTF8Encoding(false));
                 lock (_writing) _writer = new StreamWriter(pipe, new UTF8Encoding(false)) { AutoFlush = true, NewLine = "\n" };
-                OnUi(() => { Send(MeMessage()); Send(FriendsMessage()); });
+                OnUi(() => { Send(MeMessage()); Send(FriendsMessage()); SendWorld(); });
                 while (await reader.ReadLineAsync(_stop.Token) is { } line)
                     OnUi(() => Handle(line.Split(Field)));
             }
@@ -80,6 +82,10 @@ internal sealed class GamePipe : IDisposable
                     await _online.JoinAsync(friend);
                     Send("joining", friend.ProfileId.ToString(), friend.Name);
                     break;
+                case "world" when friend is not null:
+                    if (friend.Address.Length > 0) Send("world", friend.Address, friend.Name);
+                    else Send("note", $"Can't find {friend.Name}'s address yet. Try again in a moment.");
+                    break;
             }
         }
         catch (Exception e) when (e is InvalidOperationException or IOException or TimeoutException)
@@ -88,7 +94,18 @@ internal sealed class GamePipe : IDisposable
         }
     }
 
-    private string MeMessage() => string.Join(Field, "me", _online.SignedIn ? _online.Nick : "");
+    /// <summary>Tells the game to join the world of the friend joined last, once it's connected.</summary>
+    private void SendWorld()
+    {
+        if (_world is null || _writer is null) return;
+        if (_world.Address.Length > 0) Send("world", _world.Address, _world.Name);
+        else Send("note", $"Can't find {_world.Name}'s address yet. Join them again in a moment.");
+        _world = null;
+    }
+
+    // me <nick> <style>: the style is the profile's look; the game draws our name tag with it.
+    private string MeMessage() => string.Join(Field, "me", _online.SignedIn ? _online.Nick : "",
+        _online.SignedIn ? _online.ProfileOf(_online.ProfileId)?.Style ?? "" : "");
 
     private string FriendsMessage() => string.Join(Field, new[] { "friends" }.Concat(
         _online.Friends.OrderBy(f => f.Status == Online.Status.Offline).ThenBy(f => f.Name, StringComparer.OrdinalIgnoreCase)

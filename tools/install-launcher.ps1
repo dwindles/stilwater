@@ -15,6 +15,8 @@ if (-not (Test-Path (Join-Path $Dist "StilwaterLauncher.exe"))) { throw "$Dist h
 $target = Join-Path $GameFolder "Stilwater"
 New-Item -ItemType Directory -Force $target | Out-Null
 Get-ChildItem $Dist -File | Where-Object Name -ne "DFEngine.dll" | Copy-Item -Destination $target -Force
+# The launcher's web UI (pages, styles, scripts), next to the exe.
+Copy-Item (Join-Path $Dist "ui") $target -Recurse -Force
 if (Test-Path (Join-Path $PSScriptRoot "..\launcher\assets")) {
     Copy-Item (Join-Path $PSScriptRoot "..\launcher\assets") $target -Recurse -Force
 }

@@ -54,6 +54,7 @@ CREATE TABLE IF NOT EXISTS profile_extras (
 # Profile pictures: JPEG or PNG, at most this many bytes (the launcher sends 160 x 160 JPEGs).
 AVATAR_BYTES = 64 * 1024
 BIO_CHARS = 120
+STYLE_CHARS = 200   # a profile's look (banner colour, crew tag, name style): key=value;... set by the launcher
 
 NICK = re.compile(r"^[A-Za-z0-9_\-\[\]\.]{3,20}$")
 EMAIL = re.compile(r"^[^@\s\\]+@[^@\s\\]+\.[^@\s\\]+$")
@@ -74,6 +75,9 @@ class Accounts:
         self.db = sqlite3.connect(path)
         self.db.row_factory = sqlite3.Row
         self.db.executescript(SCHEMA)
+        # Added after the first release: the profile's look.
+        if "style" not in {row["name"] for row in self.db.execute("PRAGMA table_info(profile_extras)")}:
+            self.db.execute("ALTER TABLE profile_extras ADD COLUMN style TEXT NOT NULL DEFAULT ''")
         self.db.commit()
 
     # --- profiles
@@ -163,21 +167,22 @@ class Accounts:
             self.db.execute("DELETE FROM messages WHERE recipient = ?", (recipient,))
         return rows
 
-    # --- public profile: picture and bio
+    # --- public profile: picture, bio and look
 
     def public_profile(self, profile_id: int):
-        """{nick, created, bio, avatar, avatar_hash} or None."""
+        """{nick, created, bio, avatar, avatar_hash, style} or None."""
         row = self.db.execute(
-            "SELECT p.nick, p.created, e.bio, e.avatar, e.avatar_hash FROM profiles p "
+            "SELECT p.nick, p.created, e.bio, e.avatar, e.avatar_hash, e.style FROM profiles p "
             "LEFT JOIN profile_extras e ON e.profile_id = p.id WHERE p.id = ?", (profile_id,)).fetchone()
         if row is None:
             return None
         return {"nick": row["nick"], "created": row["created"], "bio": row["bio"] or "",
-                "avatar": row["avatar"] or b"", "avatar_hash": row["avatar_hash"] or ""}
+                "avatar": row["avatar"] or b"", "avatar_hash": row["avatar_hash"] or "", "style": row["style"] or ""}
 
-    def set_profile(self, profile_id: int, bio: str | None = None, avatar: bytes | None = None) -> str:
-        """Changes the bio and/or picture (b"" removes it); returns the picture's hash. Errors carry
-        text for the player."""
+    def set_profile(self, profile_id: int, bio: str | None = None, avatar: bytes | None = None,
+                    style: str | None = None) -> str:
+        """Changes the bio, picture (b"" removes it) and/or look; returns the picture's hash. Errors
+        carry text for the player. The look is the launcher's to read; it's kept short and printable."""
         if avatar:
             if len(avatar) > AVATAR_BYTES:
                 raise AccountError(0, "That picture is too big.")
@@ -187,11 +192,12 @@ class Accounts:
         if current is None:
             raise AccountError(0, "No such profile.")
         bio = current["bio"] if bio is None else bio[:BIO_CHARS]
+        style = current["style"] if style is None else "".join(c for c in style if c.isprintable() and c != "\\")[:STYLE_CHARS]
         if avatar is None:
             avatar, digest = current["avatar"], current["avatar_hash"]
         else:
             digest = hashlib.sha1(avatar).hexdigest()[:16] if avatar else ""
         with self.db:
-            self.db.execute("INSERT OR REPLACE INTO profile_extras (profile_id, bio, avatar, avatar_hash, updated) "
-                            "VALUES (?, ?, ?, ?, ?)", (profile_id, bio, avatar or None, digest, int(time.time())))
+            self.db.execute("INSERT OR REPLACE INTO profile_extras (profile_id, bio, avatar, avatar_hash, style, updated) "
+                            "VALUES (?, ?, ?, ?, ?, ?)", (profile_id, bio, avatar or None, digest, style, int(time.time())))
         return digest
