@@ -91,6 +91,8 @@ internal sealed class Bridge
             case "app.log": return ReadLog();
             case "app.openUrl": OpenUrl(Text("url")); return null;
             case "app.openFolder": OpenFolder(Text("which")); return null;
+            case "app.stats": return GameStats.State(game);
+            case "app.crash": return GameStats.Crash(Required(), Text("name"));
 
             case "online.status": return OnlineState();
             case "online.check":
@@ -238,7 +240,7 @@ internal sealed class Bridge
             canPlay = exe == ExeKind.Unencrypted && runtime;
             if (!canPlay) problem = exe != ExeKind.Unencrypted ? "SR2_pc.exe isn't ready yet: run install.bat." : "The Stilwater runtime is missing: run install.bat.";
         }
-        return new { version = Updater.Current.ToString(), staff = Staff.RepoFolder(_game) is not null, canPlay, problem, serviceName = Online.ServiceName, art = Art, checks };
+        return new { version = Updater.Current.ToString(), staff = Staff.RepoFolder(_game) is not null, canPlay, problem, running = GameInstall.IsRunning(), serviceName = Online.ServiceName, art = Art, checks };
     }
 
     private static object Check(bool ok, string name, string detail) => new { ok, name, detail };
@@ -246,7 +248,7 @@ internal sealed class Bridge
     private object Play()
     {
         var game = Required();
-        if (GameInstall.IsRunning()) return new { ok = false, message = "Saints Row 2 is already running." };
+        if (GameInstall.IsRunning()) return PlayAnotherCopy(game);
         // Stilwater Online keeps the launcher signed in beside the game (the in-game menu uses it for
         // friends and invites); OpenSpy has one session per account, which the game takes.
         var wasSignedIn = _online.SignedIn && Online.UsesOpenSpy;
@@ -255,10 +257,13 @@ internal sealed class Bridge
         if (!result.Ok) return new { ok = false, message = result.Message };
 
         _form.WindowState = FormWindowState.Minimized;
+        var started = DateTime.Now;
         _gameProcess = Process.GetProcessById(result.ProcessId);
         _gameProcess.EnableRaisingEvents = true;
         _gameProcess.Exited += (_, _) => _form.BeginInvoke(async () =>
         {
+            try { GameStats.AddSession(started); }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
             _gameProcess?.Dispose();
             _gameProcess = null;
             _form.WindowState = FormWindowState.Normal;
@@ -270,6 +275,27 @@ internal sealed class Bridge
             }
         });
         return new { ok = true, message = "Saints Row 2 is running." };
+    }
+
+    /// <summary>Play while the game runs: another copy next to it (SecondCopy.cs), with saves and a
+    /// sign-in of its own, to try co-op with more players on one PC.</summary>
+    private static object PlayAnotherCopy(GameInstall game)
+    {
+        if (SecondCopy.Next() is not int copy)
+            return new { ok = false, message = "Four copies of Saints Row 2 are already running." };
+        try { SecondCopy.Prepare(copy); }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or InvalidOperationException)
+        {
+            return new { ok = false, message = e.Message };
+        }
+        var result = Runtime.Launch(game, copy);
+        if (!result.Ok) return new { ok = false, message = result.Message };
+        return new
+        {
+            ok = true,
+            another = true,
+            message = $"Copy {copy} started. Sign it in to Stilwater Online with another account, then join from Pause → Co-op → Join an online game.",
+        };
     }
 
     private static string ReadLog()
@@ -324,6 +350,8 @@ internal sealed class Bridge
         {
             "mods" => Path.Combine(Required().Folder, "mods"),
             "game" => Required().Folder,
+            "saves" => GameLogin.Folder,
+            "crashes" => GameStats.CrashFolder(Required()),
             _ => Path.Combine(Runtime.Folder, "logs"),
         };
         Directory.CreateDirectory(folder);

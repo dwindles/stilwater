@@ -12,6 +12,7 @@
 #include <Wininet.h>
 #include "safetyhook.hpp"
 #include "MPStorage.h"
+#include "../Stilwater/CoopSize.h"
 #pragma comment(lib, "wininet.lib")
 
 enum E_NAME
@@ -71,7 +72,9 @@ namespace Gamespy
 	bool isSessionCoop(uintptr_t session)
 	{
 		auto extra_info = get_extra_info(session);
-		return (*(uint32_t*)(extra_info + 0x38)) == 2;
+		// Co-op's room is 2, or Stilwater's MaxCoopPlayers (CoopSize.cpp raises it); multiplayer's is 8 or 12.
+		const uint32_t room = *(uint32_t*)(extra_info + 0x38);
+		return room == 2 || (CoopSize::Players() > 2 && room == static_cast<uint32_t>(CoopSize::Players()));
 	}
 
 	__declspec(noinline) bool get_is_syslink(uintptr_t session = NULL)

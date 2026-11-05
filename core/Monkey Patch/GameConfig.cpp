@@ -11,6 +11,7 @@
 #include <windows.h>
 
 #include "FileLogger.h"
+#include "Stilwater/SecondCopy.h"
 #include "Patcher/patch.h"
 
 #if !RELOADED
@@ -315,7 +316,11 @@ namespace GameConfig
 	{
 		GetCurrentDirectoryA(MAX_PATH, inipath);
 		strcat_s(inipath, MAX_PATH, "\\");
+		#if !RELOADED
+		strcat_s(inipath, MAX_PATH, SecondCopy::IniName());
+#else
 		strcat_s(inipath, MAX_PATH, ini_name);
+#endif
 	}
 
 	char* GetINIPath() { return inipath; }

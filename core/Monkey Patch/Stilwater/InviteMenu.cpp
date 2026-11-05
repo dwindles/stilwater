@@ -33,6 +33,7 @@
 #include "Overlay.h"
 #include "Trainer.h"
 #include "ExtraPlayers.h"
+#include "SecondCopy.h"
 #include "../FileLogger.h"
 #include "../GameConfig.h"
 #include "../General/General.h"
@@ -598,7 +599,8 @@ namespace InviteMenu
 		g_panelX = (int)GameConfig::GetValue("Stilwater", "MenuX", 80, "Where the Stilwater menu sits (drag its title bar to move it).");
 		g_panelY = (int)GameConfig::GetValue("Stilwater", "MenuY", 120);
 		HookMouse();
-		std::thread(PipeThread).detach();
+		if (!SecondCopy::Active())   // the launcher talks to the first copy
+			std::thread(PipeThread).detach();
 	}
 
 	void Update()

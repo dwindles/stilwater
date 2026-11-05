@@ -27,6 +27,14 @@ window.mock = {
         ],
       };
       case "app.update": return { version: "0.2.2" };
+      case "app.stats": return { hours: 41.3, sessions: 57, last: "Nov 3, 3:31 PM", crashes: [
+        { name: "SR2_pc.exe.20261103144012.log", when: "Nov 3, 2:40 PM", where: "0x0090D44E", what: "Access violation reading location 0x00000034" },
+        { name: "SR2_pc.exe.20261027140440.log", when: "Oct 27, 2:04 PM", where: "0x00C1C690", what: "Access violation writing location 0x00000000" } ] };
+      case "app.crash": return "Unhandled exception at 0x0090D44E in SR2_pc.exe (+0x50d44e): 0xC0000005: Access violation reading location 0x00000034.";
+      case "app.play":
+        this.copies = (this.copies || 0) + 1;
+        return this.copies === 1 ? { ok: true, message: "Saints Row 2 is running." }
+          : { ok: true, another: true, message: `Copy ${this.copies} started. Sign it in to Stilwater Online with another account, then join from Pause → Co-op → Join an online game.` };
       case "app.release": return { version: "v0.2.1", date: "October 27, 2026", notes: "Works without Steam.\n\n- install.bat finds the game next to the zip, in Steam, or asks you to pick the folder.\n- The launcher uses the game it's installed in.\n- Glock sounds fixed: they were landing on the flamethrower." };
       case "online.check": return { ok: true, server: "155.138.222.253" };
       case "online.ping": return Math.random() < .03 ? null : Math.round(11 + Math.random() * 6 + (Math.random() < .08 ? 40 : 0));

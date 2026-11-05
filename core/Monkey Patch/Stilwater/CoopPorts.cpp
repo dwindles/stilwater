@@ -54,8 +54,9 @@ namespace CoopPorts
 			return ok && InetNtopW(AF_INET, &me.sin_addr, text, INET_ADDRSTRLEN) ? text : L"";
 		}
 
-		// The UDP ports this process has open (not loopback-only ones).
-		std::set<unsigned short> GamePorts()
+		// The UDP ports this process (or, with anyProcess, any process on this PC) has open, not
+		// loopback-only ones.
+		std::set<unsigned short> GamePorts(bool anyProcess = false)
 		{
 			std::set<unsigned short> ports;
 			DWORD size = 0;
@@ -68,7 +69,7 @@ namespace CoopPorts
 			for (DWORD i = 0; i < table->dwNumEntries; i++)
 			{
 				const MIB_UDPROW_OWNER_PID& row = table->table[i];
-				if (row.dwOwningPid == pid && row.dwLocalAddr != htonl(INADDR_LOOPBACK))
+				if ((anyProcess || row.dwOwningPid == pid) && row.dwLocalAddr != htonl(INADDR_LOOPBACK))
 					ports.insert(ntohs(static_cast<u_short>(row.dwLocalPort)));
 			}
 			return ports;
@@ -82,6 +83,8 @@ namespace CoopPorts
 			unknown->QueryInterface(IID_IEnumVARIANT, reinterpret_cast<void**>(&items));
 			unknown->Release();
 			if (!items) return;
+			// A second copy of the game (SecondCopy.cpp) leaves the first copy's forwards alone.
+			const std::set<unsigned short> open = GamePorts(true);
 			std::vector<std::pair<long, std::wstring>> ours;
 			VARIANT item;
 			VariantInit(&item);
@@ -96,7 +99,7 @@ namespace CoopPorts
 					map->get_Description(&description);
 					map->get_Protocol(&protocol);
 					map->get_ExternalPort(&port);
-					if (description && wcscmp(description, Description) == 0)
+					if (description && wcscmp(description, Description) == 0 && !open.count(static_cast<unsigned short>(port)))
 						ours.emplace_back(port, protocol ? protocol : L"UDP");
 					SysFreeString(description);
 					SysFreeString(protocol);

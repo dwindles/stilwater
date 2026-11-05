@@ -9,6 +9,8 @@
 #include <spdlog/sinks/stdout_color_sinks.h>
 
 #include <filesystem>
+
+#include "Stilwater/SecondCopy.h"
 #include <iostream>
 #include <memory>
 #include <stdio.h>
@@ -65,7 +67,7 @@ namespace Logger
 
 			if (l_DebugOutput)
 			{
-				auto fileSink = std::make_shared<spdlog::sinks::basic_file_sink_mt>("debug.txt", true);
+				auto fileSink = std::make_shared<spdlog::sinks::basic_file_sink_mt>(SecondCopy::LogName(), true);
 				fileSink->set_pattern("%v");
 				sinks.push_back(fileSink);
 			}
@@ -130,7 +132,7 @@ namespace Logger
 		if (l_DebugOutput)
 		{
 			std::error_code ec;
-			std::filesystem::remove("debug.txt", ec);
+			std::filesystem::remove(SecondCopy::LogName(), ec);
 		}
 
 		f_logger = nullptr;
@@ -147,7 +149,7 @@ namespace Logger
 			return false;
 
 		ResetLogger();
-		const bool success = CopyFileW(L"debug.txt", destPath, FALSE) != FALSE;
+		const bool success = CopyFileW(std::filesystem::path(SecondCopy::LogName()).c_str(), destPath, FALSE) != FALSE;
 		g_Logger = CreateLogger();
 		return success;
 	}

@@ -230,6 +230,7 @@ function renderPlay() {
     </li>`).join("");
   $("#play-button").disabled = !app.canPlay;
   if (!app.canPlay && app.problem) setPlayStatus(app.problem, true);
+  if (app.running && !gameRunning) setGameRunning(true);   // started from another launcher window
 
   const on = online.friends.filter(f => f.status !== "offline");
   $("#online-count").textContent = online.signedIn ? `${on.length} online` : "";
@@ -267,18 +268,21 @@ $("#play-button").onclick = async () => {
   try {
     const r = await api("app.play");
     setPlayStatus(r.message, !r.ok);
-    if (r.ok) setGameRunning(true); else $("#play-button").disabled = false;
+    // While the game runs, Play starts another copy of it (r.another), to try co-op with more players.
+    if (r.ok && !r.another) setGameRunning(true);
+    $("#play-button").disabled = false;
   }
   catch (e) { setPlayStatus(e.message, true); $("#play-button").disabled = false; }
   finally { document.body.classList.remove("launching"); }
 };
-on("gameExited", () => { setPlayStatus("Saints Row 2 closed."); $("#play-button").disabled = !app.canPlay; setGameRunning(false); refreshLog(); });
+on("gameExited", () => { setPlayStatus("Saints Row 2 closed."); $("#play-button").disabled = !app.canPlay; setGameRunning(false); refreshLog(); refreshStats(); });
 
 // While the game runs the launcher sits minimized, so the art and the ping graph stop.
 let gameRunning = false;
 function setGameRunning(running) {
   gameRunning = running;
   document.body.classList.toggle("game-running", running);
+  $("#play-button").textContent = running ? "Another copy" : "Play";
   pingLoop();
   updateMusic();
 }
@@ -365,6 +369,30 @@ async function refreshLog() {
   if (text) { $("#log").textContent = text; $("#log").scrollTop = 1e9; }
 }
 
+// --- Your game: time played (from Play to the game closing), shortcuts, and the last crash reports
+// with a copy button, to send to whoever can read them.
+async function refreshStats() {
+  let s;
+  try { s = await api("app.stats"); } catch { return; }
+  $("#stats").innerHTML = `
+    <div><b>${s.hours}</b><span>hours played</span></div>
+    <div><b>${s.sessions}</b><span>${s.sessions === 1 ? "session" : "sessions"}</span></div>
+    <div><b>${esc(s.last || "Not yet")}</b><span>last played</span></div>`;
+  $("#crashes").innerHTML = s.crashes.length ? s.crashes.map(c => `
+    <div class="crash">
+      <span class="when">${esc(c.when)}</span>
+      <span class="what">Crash${c.where ? ` at <code>${esc(c.where)}</code>` : ""}${c.what ? ` · ${esc(c.what)}` : ""}</span>
+      <button class="button small" data-crash="${esc(c.name)}">Copy</button>
+    </div>`).join("") : `<p class="muted small">No crash reports.</p>`;
+}
+document.querySelectorAll("[data-folder]").forEach(b => b.onclick = () => run(() => api("app.openFolder", { which: b.dataset.folder })));
+$("#crashes").onclick = async e => {
+  const name = e.target.closest("[data-crash]")?.dataset.crash;
+  if (!name) return;
+  try { navigator.clipboard.writeText(await api("app.crash", { name })); toast("Crash report copied. Paste it to whoever is fixing it."); }
+  catch (err) { toast(err.message, "bad"); }
+};
+
 // --- Friends
 async function invite(id) {
   const f = online.friends.find(x => x.id === id);
@@ -377,7 +405,7 @@ async function join(id) {
   const f = online.friends.find(x => x.id === id);
   const done = await run(() => api("online.join", { id }).then(() => true));
   if (!done) return;
-  if (document.body.classList.contains("game-running")) toast(`Joining ${f ? f.name : "your friend"}. Their co-op is under Pause > Co-op if it has room.`);
+  if (gameRunning) toast(`Joining ${f ? f.name : "your friend"}. Their co-op is under Pause > Co-op if it has room.`);
   else { toast(`Joining ${f ? f.name : "your friend"} once the game starts.`); show("play"); $("#play-button").click(); }
 }
 
@@ -519,7 +547,7 @@ function editProfile() {
 on("online", data => { online = data; renderMe(); if (page === "friends") renderFriends(); if (page === "play") renderPlay(); });
 on("notice", text => toast(text, "bad"));
 on("invite", data => {
-  toast(`${data.name} invited you to co-op.`, "invite", { label: "Play", run: () => { show("play"); $("#play-button").click(); } });
+  toast(`${data.name} invited you to co-op.`, "invite", { label: "Play", run: () => { show("play"); if (!gameRunning) $("#play-button").click(); } });
 });
 
 // --- Mods
@@ -781,6 +809,7 @@ async function start() {
   renderMe();
   await loadApp();
   refreshLog();
+  refreshStats();
   const first = location.hash.slice(1);
   if (["friends", "mods", "settings"].includes(first)) show(first);
   else pingLoop();

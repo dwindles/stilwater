@@ -3,6 +3,7 @@
 // game's own mission Lua (General::LuaExecute) or Juiced's existing helpers.
 #include "Trainer.h"
 
+#include "CoopSize.h"
 #include "Horns.h"
 #include "ExtraPlayers.h"
 #include "MapIcons.h"
@@ -193,6 +194,10 @@ namespace Trainer
 			  [] { ExtraPlayers::SetGhost(!ExtraPlayers::Ghost()); } },
 			{ [] { return std::string("Show my name tag\t") + (ExtraPlayers::OwnTag() ? "On" : "Off"); },
 			  [] { ExtraPlayers::SetOwnTag(!ExtraPlayers::OwnTag()); Remember(); } },
+			// The game's own co-op past two (CoopSize.cpp): the pause menu kicks only one of them.
+			{ [] { return CoopSize::KickLabel(); },
+			  [] { CoopSize::Kick(); },
+			  [](int direction) { CoopSize::KickCycle(direction); } },
 			// Map icons of our own (MapIcons.cpp): one where you stand, in the style picked with left/right.
 			{ [] { return "Add map icon here\t" + MapIcons::StyleName(); },
 			  [] { MapIcons::AddHere(); },

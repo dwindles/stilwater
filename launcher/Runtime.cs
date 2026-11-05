@@ -12,7 +12,8 @@ public static class Runtime
 
     public sealed record LaunchResult(bool Ok, int ProcessId, string Message);
 
-    public static LaunchResult Launch(GameInstall game)
+    /// <summary>Copies 2 to 4 are more copies of the game next to the first (SecondCopy.cs).</summary>
+    public static LaunchResult Launch(GameInstall game, int copy = 1)
     {
         if (!File.Exists(Loader) || !File.Exists(Dll))
             return new(false, 0, "stilwater-loader.exe or stilwater.dll is missing next to the launcher.");
@@ -28,6 +29,7 @@ public static class Runtime
         };
         start.ArgumentList.Add(game.Exe);
         start.ArgumentList.Add(Dll);
+        if (copy > 1) start.Environment["STILWATER_COPY"] = copy.ToString();     // the loader passes it on to the game
 
         using var loader = Process.Start(start)!;
         var stdout = loader.StandardOutput.ReadToEnd();
@@ -35,7 +37,7 @@ public static class Runtime
         loader.WaitForExit();
 
         return loader.ExitCode == 0 && int.TryParse(stdout.Trim(), out var pid)
-            ? new(true, pid, $"Saints Row 2 started (PID {pid}) with the Stilwater runtime.")
+            ? new(true, pid, $"Saints Row 2 {(copy > 1 ? $"(copy {copy}) " : "")}started (PID {pid}) with the Stilwater runtime.")
             : new(false, 0, $"Launch failed (loader exit code {loader.ExitCode}): {stderr.Trim()}");
     }
 }

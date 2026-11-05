@@ -21,6 +21,13 @@
 // with their crew tag, drawn with Overlay through the game's camera: its position (0x025F5B14),
 // orientation rows right, up, forward (0x025F5B38, copied from the new camera at 0x004934F0) and
 // field of view (0x025F5BA4, eased toward 0x025F5BA8), vertical, in degrees or radians.
+//
+// The game's own co-op players get the same tags: every second each sends its tag (its session
+// name, crew, colour, effect) to every other player in the co-op session, on the world ports
+// (29966-29969, the copies on one PC each have their own). A co-op character's session player is
+// the peer whose id (+0x1B0) owns the character's network object (+0xB0, its first byte); the
+// session's peers are at session (0x02528C14) +0x400, next +0x22CC, ours +0x408, name (wide) +0x4C,
+// and the address their packets come from at +0x28 (host order).
 #include "ExtraPlayers.h"
 
 #define WIN32_LEAN_AND_MEAN
@@ -59,7 +66,7 @@ namespace ExtraPlayers
 	namespace
 	{
 		constexpr char Magic[4] = { 'S', 'W', 'X', '2' };
-		constexpr uint8_t StateKind = 1, ByeKind = 2;
+		constexpr uint8_t StateKind = 1, ByeKind = 2, TagKind = 3;
 		constexpr DWORD SendMs = 50, TimeoutMs = 5000, GhostDelayMs = 3000, RenderDelayMs = 100;
 		constexpr float ShowWithin = 200.0f;
 
@@ -106,6 +113,14 @@ namespace ExtraPlayers
 		// Name tags to draw: filled each frame by Update, drawn by DrawTags (both on the game's thread).
 		struct Tag { float pos[3]; std::string name, crew; uint32_t colour; uint8_t effect; };
 		std::vector<Tag> g_tags;
+
+		// The game's own co-op: each player's tag style by session name (from their TagKind packets),
+		// and where to send ours (filled by Update, sent by the network thread).
+		struct CoopStyle { std::string crew; uint32_t colour = 0xFFFFFF; uint8_t effect = 0; DWORD seen = 0; };
+		std::map<std::string, CoopStyle> g_coopStyles;
+		std::vector<sockaddr_in> g_coopTargets;
+		Packet g_coopMine{};
+		constexpr float CoopTagHeight = 2.45f;   // above the game's own name and health bar
 		Packet g_mine{};
 		bool g_haveMine = false;
 
@@ -218,6 +233,14 @@ namespace ExtraPlayers
 					if (got == sizeof(packet) && memcmp(packet.magic, Magic, 4) == 0 && packet.id != g_id) {
 						std::lock_guard lock(g_lock);
 						const DWORD now = GetTickCount();
+						if (packet.kind == TagKind) {
+							CoopStyle& style = g_coopStyles[std::string(packet.name, strnlen(packet.name, sizeof(packet.name)))];
+							style.crew.assign(packet.crew, strnlen(packet.crew, sizeof(packet.crew)));
+							style.colour = packet.colour & 0xFFFFFF;
+							style.effect = packet.effect <= Rainbow ? packet.effect : Plain;
+							style.seen = now;
+							continue;   // not a world player, and not passed on
+						}
 						if (packet.kind == ByeKind)
 							g_peers.erase(packet.id);
 						else if (packet.kind == StateKind) {
@@ -248,6 +271,13 @@ namespace ExtraPlayers
 					}
 				}
 				const DWORD now = GetTickCount();
+				static DWORD lastTag = 0;
+				if (now - lastTag >= 1000) {
+					lastTag = now;
+					std::lock_guard lock(g_lock);
+					for (const sockaddr_in& to : g_coopTargets)
+						SendTo(g_coopMine, to);
+				}
 				if (now - lastSend >= SendMs) {
 					lastSend = now;
 					std::lock_guard lock(g_lock);
@@ -262,6 +292,80 @@ namespace ExtraPlayers
 								SendTo(g_mine, peer.address);
 					}
 				}
+			}
+		}
+
+		std::string PeerName(uintptr_t peer)
+		{
+			const auto* wide = reinterpret_cast<const wchar_t*>(peer + 0x4C);
+			char text[64] = {};
+			WideCharToMultiByte(CP_UTF8, 0, wide, static_cast<int>(wcsnlen(wide, 31)), text, sizeof(text) - 1, nullptr, nullptr);
+			return text;
+		}
+
+		// The game's own co-op players: our tag to send, where to, and a tag over each of them.
+		void CoopTags(uintptr_t me, const float* mine)
+		{
+			const uintptr_t session = *reinterpret_cast<const uintptr_t*>(0x02528C14);
+			std::vector<sockaddr_in> targets;
+			if (!session || *reinterpret_cast<const char*>(0x02528B49) == 0) {
+				std::lock_guard lock(g_lock);
+				g_coopTargets.clear();
+				return;
+			}
+			const uintptr_t self = *reinterpret_cast<const uintptr_t*>(session + 0x408);
+			const uintptr_t first = *reinterpret_cast<const uintptr_t*>(session + 0x400);
+			std::map<uint8_t, std::string> names;   // peer id -> session name
+			uintptr_t peer = first;
+			for (int guard = 0; peer && guard < 16; ++guard) {
+				names[*reinterpret_cast<const uint8_t*>(peer + 0x1B0)] = PeerName(peer);
+				if (peer != self) {
+					const uint32_t address = *reinterpret_cast<const uint32_t*>(peer + 0x28);
+					for (int port = 29966; port < 29970; port++) {
+						sockaddr_in to{};
+						to.sin_family = AF_INET;
+						to.sin_addr.s_addr = htonl(address);
+						to.sin_port = htons(static_cast<u_short>(port));
+						if (address) targets.push_back(to);
+					}
+				}
+				peer = *reinterpret_cast<const uintptr_t*>(peer + 0x22CC);
+				if (peer == first) break;
+			}
+			std::map<std::string, CoopStyle> styles;
+			{
+				std::lock_guard lock(g_lock);
+				g_coopTargets = targets;
+				memcpy(g_coopMine.magic, Magic, 4);
+				g_coopMine.kind = TagKind;
+				g_coopMine.id = g_id;
+				strncpy_s(g_coopMine.name, self ? PeerName(self).c_str() : g_name.c_str(), _TRUNCATE);
+				strncpy_s(g_coopMine.crew, g_crew.c_str(), _TRUNCATE);
+				g_coopMine.colour = g_colour;
+				g_coopMine.effect = g_effect;
+				styles = g_coopStyles;
+			}
+
+			const uintptr_t head = *reinterpret_cast<const uintptr_t*>(0x0217043C);
+			uintptr_t player = head;
+			for (int guard = 0; player && guard < 16; ++guard) {
+				const bool us = player == me;
+				const char* object = *reinterpret_cast<const char* const*>(player + 0xB0);
+				const auto name = object ? names.find(static_cast<uint8_t>(*object)) : names.end();
+				if (!us && name != names.end() && !name->second.empty()) {   // our own: "Show my name tag", above
+					const float* at = reinterpret_cast<const float*>(player + 0x14);
+					const float dx = at[0] - mine[0], dy = at[1] - mine[1], dz = at[2] - mine[2];
+					const bool shown = std::any_of(g_tags.begin(), g_tags.end(), [&](const Tag& t) { return t.name == name->second; });
+					if (!shown && dx * dx + dy * dy + dz * dz < TagsWithin * TagsWithin) {
+						Tag tag{ { at[0], at[1] + CoopTagHeight - TagHeight, at[2] }, name->second, "", 0xFFFFFF, Plain };
+						if (const auto style = styles.find(name->second); style != styles.end()) {
+							tag.crew = style->second.crew; tag.colour = style->second.colour; tag.effect = style->second.effect;
+						}
+						g_tags.push_back(tag);
+					}
+				}
+				player = *reinterpret_cast<const uintptr_t*>(player + 0x1294);
+				if (player == head) break;
 			}
 		}
 
@@ -544,6 +648,7 @@ namespace ExtraPlayers
 			if (tx * tx + ty * ty + tz * tz < TagsWithin * TagsWithin)
 				g_tags.push_back({ { at[0], at[1], at[2] }, peer.name, peer.crew, peer.colour, peer.effect });
 		}
+		CoopTags(me, mine.pos);
 		for (auto& [id, peer] : peers) {
 			if (native && peer.native) continue;
 			const float* p = peer.latest.pos;

@@ -26,6 +26,8 @@ import component;
 #include "Stilwater/ExtraPlayers.h"
 #include "Stilwater/MapIcons.h"
 #include "Stilwater/CoopSize.h"
+#include "Stilwater/SecondCopy.h"
+#include "Stilwater/CoopRelay.h"
 #include "Stilwater/OnlineServer.h"
 #if RELOADED
 #include "UGC/thaRow/Reloaded.h"
@@ -1323,6 +1325,8 @@ int RenderLoopStuff_Hacked()
 		ExtraPlayers::Update();
 		MapIcons::Update();
 		CoopSize::Update();
+		CoopRelay::Update();
+		OnlineServer::Update();
 	if (Render3D::VFXP_fixFog)
 		FogTest();
 
@@ -1719,6 +1723,8 @@ int WINAPI Hook_WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCm
 	FirstPerson::Init();
 #endif
 	CoopSize::Init();       // before the game sets up its memory (its co-op pools)
+	SecondCopy::Init();     // before WinMain: its instance check and save folder
+	CoopRelay::Init();      // after SecondCopy: its socket hooks go around SecondCopy's
 	MapIcons::Init();
 	ExtraPlayers::Init();   // before CoopPorts, so its first pass forwards the world port too
 	CoopPorts::Init();

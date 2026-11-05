@@ -16,6 +16,14 @@ Set-Location $root
 
 function Step([string] $text) { Write-Host ""; Write-Host "== $text" -ForegroundColor Magenta }
 function Run([string] $what) { if ($LASTEXITCODE) { throw "$what failed (exit code $LASTEXITCODE)" } }
+# Windows PowerShell doesn't escape double quotes inside the arguments it gives programs like git and
+# gh, so they'd split text with quotes in it (release notes often have some). That text goes to them
+# in a file instead (UTF-8, no byte order mark).
+function TextFile([string] $text) {
+    $file = [System.IO.Path]::GetTempFileName()
+    [System.IO.File]::WriteAllText($file, $text, (New-Object System.Text.UTF8Encoding $false))
+    $file
+}
 
 # Git for Windows doesn't always put itself on PATH (Git Bash finds it anyway), so look where it and
 # the other tools usually live before giving up.
@@ -110,8 +118,9 @@ if (@(git remote) -notcontains "origin") {
 }
 git diff --cached --quiet
 if ($LASTEXITCODE) {
-    $message = if ($Notes) { "Release v$Version`n`n$Notes" } else { "Release v$Version" }
-    git commit -q -m $message; Run "git commit"
+    $message = TextFile $(if ($Notes) { "Release v$Version`n`n$Notes" } else { "Release v$Version" })
+    git commit -q -F $message
+    Remove-Item $message; Run "git commit"
 }
 $branch = git rev-parse --abbrev-ref HEAD
 # main follows the newest release, so the repo's front page matches what players get. It goes
@@ -126,7 +135,8 @@ git push -u origin $branch; Run "git push"
 Step "Publishing the release"
 $body = if ($Notes) { $Notes } else { "Stilwater v$Version." }
 $body += "`n`nInstall: extract the zip and run install.bat. It needs Saints Row 2 (from Steam or any copy of the game folder) and sets up everything else (Juiced Patch, DirectX, .NET, DXVK). Already installed? Press Update in the launcher."
-gh release create "v$Version" $zip --repo $Repository --title "Stilwater v$Version" --notes $body --target $branch
-Run "gh release create"
+$notesFile = TextFile $body
+gh release create "v$Version" $zip --repo $Repository --title "Stilwater v$Version" --notes-file $notesFile --target $branch
+Remove-Item $notesFile; Run "gh release create"
 Write-Host ""
 Write-Host "Published Stilwater v${Version}: https://github.com/$Repository/releases/tag/v$Version" -ForegroundColor Green

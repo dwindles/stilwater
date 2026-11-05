@@ -28,19 +28,22 @@ internal sealed record GameLogin(string Nick, string Email, string Password, str
         return new GameLogin(Field(1), Field(2), Field(0), Field(3));
     }
 
-    /// <summary>Saves the login. A missing settings.dat starts from profile.dat's display record.</summary>
-    public void Write()
+    /// <summary>Saves the login. A missing settings.dat starts from profile.dat's display record.
+    /// folder: another save folder than the game's (the second copy's, which the running game doesn't touch).</summary>
+    public void Write(string? folder = null)
     {
-        if (GameInstall.IsRunning()) throw new InvalidOperationException("Close Saints Row 2 first. It rewrites settings.dat while running.");
+        if (folder is null && GameInstall.IsRunning()) throw new InvalidOperationException("Close Saints Row 2 first. It rewrites settings.dat while running.");
+        folder ??= Folder;
+        var settingsPath = Path.Combine(folder, "settings.dat");
         byte[] data;
-        if (File.Exists(SettingsPath))
+        if (File.Exists(settingsPath))
         {
-            data = File.ReadAllBytes(SettingsPath);
+            data = File.ReadAllBytes(settingsPath);
             if (data.Length < DisplayRecord + 4 * Block) Array.Resize(ref data, DisplayRecord + 4 * Block);
         }
         else
         {
-            var profile = Path.Combine(Folder, "profile.dat");
+            var profile = Path.Combine(folder, "profile.dat");
             if (!File.Exists(profile)) throw new InvalidOperationException("Start Saints Row 2 once first, so it saves its settings.");
             data = new byte[DisplayRecord + 4 * Block];
             File.ReadAllBytes(profile).AsSpan(ProfileDisplayRecord, DisplayRecord).CopyTo(data);
@@ -48,7 +51,7 @@ internal sealed record GameLogin(string Nick, string Email, string Password, str
 
         foreach (var (i, text) in new[] { (0, Password), (1, Nick), (2, Email), (3, LanName) })
             Encode(text, i).CopyTo(data, DisplayRecord + i * Block);
-        File.WriteAllBytes(SettingsPath, data);
+        File.WriteAllBytes(settingsPath, data);
     }
 
     private static IEnumerable<byte> Keystream(int block)
